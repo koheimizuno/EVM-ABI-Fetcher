@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/joho/godotenv"
-	"math/big"
 	"os"
 )
 
@@ -18,14 +17,15 @@ func main() {
 	}
 
 	apiKey := os.Getenv("API_KEY")
+	rpcURL := os.Getenv("RPC_URL")
 
 	db := db.InitDatabase()
 
-	fetcher := fetch.FetcherCli{apiKey}
-	data, err := fetcher.GetABIAtStartOfBlock(db, 1, common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7"), big.NewInt(12345))
+	fetcher := fetch.FetcherCli{ApiKey: apiKey, RpcUrl: rpcURL}
+	_, err = fetcher.GetABIAtStartOfBlock(db, 1, common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7"))
 	if err != nil {
 		fmt.Println("error:", err)
 	} else {
-		fmt.Println("data", string(data))
+		fmt.Println("Successfully!")
 	}
 }

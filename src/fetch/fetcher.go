@@ -1,13 +1,16 @@
 package fetch
 
 import (
+	myDB "code/src/db"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"gorm.io/gorm"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 )
@@ -24,6 +27,7 @@ type ApiResponse struct {
 // @dev Config for fetching the data from Etherscan
 type FetcherCli struct {
 	ApiKey string
+	RpcUrl string
 }
 
 // GetABIAtStartOfBlock
@@ -34,11 +38,97 @@ type FetcherCli struct {
 // @param block Get the ABI in a certain block height.
 //
 //	NOTICE: There is no such an API in the Etherscan, so this parameter won't be used temporarily
-func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
+func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address) ([]byte, error) {
 
-	requestURL, err := checkChainIDAndGetReqURL(f.ApiKey, chainID, contractAddress)
+	// 1. Check if the ABI exists in the database for the given chainID, contract address, and function signature. If found, return the ABI from the database
+
+	addressBytes := contractAddress.Bytes() // Convert Ethereum addresses to a format that can be queried by the database
+
+	var deployment myDB.ContractDeployment
+	// Query in the database
+	result := db.Where("chain_id = ? AND contract_address = ?", chainID, addressBytes).First(&deployment)
+	if result.Error == nil {
+		// Search for the specific ABI by ContractDeployment.FunctionSignatureID
+		var signature myDB.FunctionSignature
+		result := db.Where("id = ?", deployment.FunctionSignatureID).First(&signature)
+		if result.Error == nil { // result.Error is equal to nil means that there is an ABI in the database of the input contractAddress
+			return []byte(signature.FunctionABI), nil
+		}
+	}
+
+	// 2. If the ABi is not found in the database, query Etherscan to retrieve the ABI
+	//    If Etherscan returns the ABI, store it in the database and return it
+
+	abi, err := queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
+	// 3. If Etherscan does not have the ABI, return an appropriate error
 	if err != nil {
-		return nil, errors.Wrap(errors.New("Please check the chainID"), "Invalid chainID")
+		return nil, errors.Wrap(errors.New("Fail to fetch ABI by Etherscan API"), "Fetch fail")
+	}
+
+	// Prepare some UUID
+	functionSignatureID := uuid.New()
+	contractBytecodeID := uuid.New()
+
+	// Create a new record of ContractBytecode
+	bytecode, err := queryRuntimeCode(f.RpcUrl, chainID, contractAddress)
+	if err != nil {
+		return nil, errors.Wrap(errors.New("Fail to fetch Bytecode by Etherscan API"), "Fetch fail")
+	}
+
+	newContractBytecode := myDB.ContractBytecode{
+		ID:       contractBytecodeID,
+		Bytecode: bytecode,
+	}
+	db.Create(&newContractBytecode)
+
+	// Store the ABI that fetched from Etherscan into the database
+	newSignature := myDB.FunctionSignature{
+		ID:          functionSignatureID,
+		Signature:   nil, // TODO How to deal with this
+		FunctionABI: abi, // TODO How to deal with this
+	}
+	db.Create(&newSignature)
+
+	// Create a new record of ContractDeployment
+	newDeployment := myDB.ContractDeployment{
+		ChainID:             chainID,
+		ContractAddress:     addressBytes,
+		ContractBytecodeID:  contractBytecodeID,
+		FunctionSignatureID: functionSignatureID,
+	}
+	db.Create(&newDeployment)
+
+	return []byte(abi), nil
+}
+
+// @dev Check ChainID and get the format the request url
+func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common.Address) (string, error) {
+	var requestURL string
+
+	if chainID == 1 { // Ethereum
+		requestURL = fmt.Sprintf("https://api.etherscan.io/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
+	} else if chainID == 56 { // BSC
+		// TODO
+	} else if chainID == 42161 { // Arbitrum
+		// TODO
+	} else if chainID == 8453 { // Base
+		// TODO
+	} else if chainID == 43114 { // Avalanche
+		// TODO
+	} else if chainID == 137 { // Polygon
+		// TODO
+	} else {
+		return "", errors.Wrap(errors.New("You should provide a valid chainID"), "Invalid chainID")
+	}
+
+	return requestURL, nil
+}
+
+// @dev Query a contract's ABI
+func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Address) (string, error) {
+	requestURL, err := checkChainIDAndGetReqURL(apiKey, chainID, contractAddress)
+	if err != nil {
+		return "", errors.Wrap(errors.New("Please check the chainID"), "Invalid chainID")
 	}
 
 	//////////////////////////////////////// Proxy ////////////////////////////////////////////////////////////////
@@ -61,7 +151,7 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// Sending GET requests using clients with proxies
 	response, err := client.Get(requestURL)
 	if err != nil {
-		return nil, errors.Wrap(errors.New("Fail to send a request"), "Request fail")
+		return "", errors.Wrap(errors.New("Fail to send a request"), "Request fail")
 	}
 	defer response.Body.Close()
 	//////////////////////////////////////// Proxy ////////////////////////////////////////////////////////////////
@@ -69,45 +159,35 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// Read response content
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, errors.Wrap(errors.New("Fail to get the response"), "Response fail")
+		return "", errors.Wrap(errors.New("Fail to get the response"), "Response fail")
 	}
 
 	// Parsing JSON data
 	var apiResponse ApiResponse
 	err = json.Unmarshal(body, &apiResponse)
 	if err != nil {
-		return nil, errors.Wrap(errors.New("Fail to parsing JSON data"), "Parse fail")
+		return "", errors.Wrap(errors.New("Fail to parsing JSON data"), "Parse fail")
 	}
 
-	// 1. Check if the ABI exists in the database for the given chainID, contract address, and function signature.
-	//    If found, return the ABI from the database
-
-	// 2. If the ABi is not found in the database, query Etherscan to retrieve the ABI
-	//    If Etherscan returns the ABI, store it in the database and return it
-
-	// 3. If Etherscan does not have the ABI, return an appropriate error
-
-	return []byte(apiResponse.Result), nil
+	return apiResponse.Result, nil
 }
 
-func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common.Address) (string, error) {
-	var requestURL string
-
-	if chainID == 1 { // Ethereum
-		requestURL = fmt.Sprintf("https://api.etherscan.io/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
-	} else if chainID == 56 { // BSC
-		// TODO
-	} else if chainID == 42161 { // Arbitrum
-		// TODO
-	} else if chainID == 8453 { // Base
-		// TODO
-	} else if chainID == 43114 { // Avalanche
-		// TODO
-	} else if chainID == 137 { // Polygon
-		// TODO
-	} else {
-		return "", errors.Wrap(errors.New("You should provide a valid chainID"), "Invalid chainID")
+// @dev Query a contract's RuntimeCode
+func queryRuntimeCode(rpcUrl string, chainID int, contractAddress common.Address) ([]byte, error) {
+	client, err := ethclient.Dial(rpcUrl)
+	if err != nil {
+		return nil, errors.Wrap(errors.New("Fail to connect to the node"), "Connect fail")
 	}
 
-	return requestURL, nil
+	bytecode, err := client.CodeAt(context.Background(), contractAddress, nil) // nil: the newest block
+	if err != nil {
+		return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
+	}
+
+	if len(bytecode) == 0 {
+		return []byte{}, nil
+	} else {
+		return bytecode, nil
+	}
+
 }
