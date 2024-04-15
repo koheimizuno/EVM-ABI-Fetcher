@@ -29,11 +29,6 @@ type ContractDeployment struct {
 	ContractAddress     []byte    `gorm:"type:blob"` // contract address(bytea or hex)
 	ContractBytecodeID  uuid.UUID `gorm:"type:uuid"` // contract bytecode unique identifier(uuid or int)
 	FunctionSignatureID uuid.UUID `gorm:"type:uuid"` // function signature unique identifier(uuid o int)
-	// The field below will not be used temporarily
-	DeployedBlockNumber   int `gorm:"type:int"` // deployedAt - block number
-	DeployedTxIndex       int `gorm:"type:int"` // deployedAt - txIndex
-	DestructedBlockNumber int `gorm:"type:int"` // destructedAt - block number
-	DestructedTxIndex     int `gorm:"type:int"` // destructedAt - txIndex
 }
 
 // InitDatabase

@@ -36,8 +36,6 @@ type FetcherCli struct {
 // @param chainID The chain ID
 // @param contractAddress The contract whose ABI you want to get
 // @param block Get the ABI in a certain block height.
-//
-//	NOTICE: There is no such an API in the Etherscan, so this parameter won't be used temporarily
 func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address) ([]byte, error) {
 
 	// 1. Check if the ABI exists in the database for the given chainID, contract address, and function signature. If found, return the ABI from the database
