@@ -15,8 +15,10 @@ require (
 	github.com/holiman/uint256 v1.2.4 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/supranational/blst v0.3.11 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
