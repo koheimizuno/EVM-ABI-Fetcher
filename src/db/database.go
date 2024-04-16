@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -31,6 +32,8 @@ type ContractDeployment struct {
 	FunctionSignatureID uuid.UUID `gorm:"type:uuid"` // function signature unique identifier(uuid o int)
 }
 
+var log = logrus.New()
+
 // InitDatabase
 // @dev Init the database, get the database's handle
 // @return SQLite3's handle
@@ -38,7 +41,8 @@ func InitDatabase() (db *gorm.DB) {
 	// Get the database's handle
 	db, err := gorm.Open(sqlite.Open("ABIs.db"), &gorm.Config{})
 	if err != nil {
-		panic("failed to connect to the database")
+		log.Error("Fail to connect to the database in current directory: ABIs.db")
+		panic("Fail to connect to the database in current directory: ABIs.db")
 	}
 
 	// Check if tables exist and migrate if they do not

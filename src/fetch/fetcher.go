@@ -10,11 +10,13 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"io"
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 )
 
 // ApiResponse
@@ -34,6 +36,7 @@ type FetcherCli struct {
 }
 
 var cache = *myCache.NewABICache()
+var log = logrus.New()
 
 // GetABIAtStartOfBlock
 // @notice We do not use the block parameter for now
@@ -46,7 +49,7 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// [1. In memory]
 	abi, isFound := cache.Get(chainID, contractAddress)
 	if isFound {
-		fmt.Println("found in cache")
+		log.Info("Found ABI in cache, length:", len(abi))
 		return abi, nil
 	}
 
@@ -62,27 +65,26 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 		// Search for the specific ABI by ContractDeployment.FunctionSignatureID
 		var signature myDB.FunctionSignature
 		// In some cases, there may be multiple identical pieces of data, and we will only take one of them.
-		result := db.Where("id = ?", deployment.FunctionSignatureID).First(&signature)
+		result = db.Where("id = ?", deployment.FunctionSignatureID).First(&signature)
 		if result.Error == nil { // result.Error is equal to nil means that there is an ABI in the database of the input contractAddress
-			fmt.Println("In database")
-
 			///////////////////// Write Lock //////////////////////////
 			f.mu.Lock()
 
 			// Second check to prevent this situation: Multiple threads complete read operations simultaneously and then queue up for write operations,
 			// which can cause duplicate cache writes
-			abi, isFound := cache.Get(chainID, contractAddress)
-			if isFound {
-				fmt.Println("found in cache")
-				return abi, nil
+			abiInSecondCheck, isFoundInSecondCheck := cache.Get(chainID, contractAddress)
+			if isFoundInSecondCheck {
+				log.Info("Found ABI in cache, length:", len(abiInSecondCheck))
+				return abiInSecondCheck, nil
 			} else {
 				// Set to cache
-				cache.Set(chainID, contractAddress, abi)
+				cache.Set(chainID, contractAddress, []byte(signature.FunctionABI))
 			}
 
 			f.mu.Unlock()
 			///////////////////// Write Lock //////////////////////////
 
+			log.Info("Found ABI in DB, length:", len(signature.FunctionABI))
 			return []byte(signature.FunctionABI), nil
 		}
 	}
@@ -93,16 +95,20 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	abi, err := queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
 	// If Etherscan does not have the ABI, return an appropriate error
 	if err != nil {
+		log.Error("Fail to fetch ABI by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
 		return nil, errors.Wrap(errors.New("Fail to fetch ABI by Etherscan API"), "Fetch fail")
 	}
+
+	log.Info("Fetch ABI in Etherscan, length:", len(abi))
 
 	// Prepare some UUID
 	functionSignatureID := uuid.New()
 	contractBytecodeID := uuid.New()
 
 	// Create a new record of ContractBytecode
-	bytecode, err := queryRuntimeCode(f.RpcUrl, chainID, contractAddress)
+	bytecode, err := queryRuntimeCode(f.RpcUrl, contractAddress)
 	if err != nil {
+		log.Error("Fail to fetch Bytecode by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
 		return nil, errors.Wrap(errors.New("Fail to fetch Bytecode by Etherscan API"), "Fetch fail")
 	}
 
@@ -137,26 +143,28 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	}
 	db.Create(&newDeployment)
 
-	abi, isFound = cache.Get(chainID, contractAddress)
+	abiInSecondCheck, isFound := cache.Get(chainID, contractAddress)
 	if isFound {
-		fmt.Println("found in cache")
-		return abi, nil
+		log.Info("Found ABI in cache, length:", len(abiInSecondCheck))
+		return abiInSecondCheck, nil
 	} else {
-		// Set to cache
 		cache.Set(chainID, contractAddress, abi)
 	}
 	///////////////////// Write Lock //////////////////////////
 
 	f.mu.Unlock()
 
-	fmt.Println("In Etherscan")
-
 	return abi, nil
 }
 
 // @dev Check ChainID and get the format the request url
+// @notice Sometimes we could fetch data in Etherscan without an API KEY
 func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common.Address) (string, error) {
 	var requestURL string
+
+	if apiKey == "" {
+		log.Warning("The request may be fail without an API KEY")
+	}
 
 	if chainID == 1 { // Ethereum
 		requestURL = fmt.Sprintf("https://api.etherscan.io/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
@@ -171,7 +179,8 @@ func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common
 	} else if chainID == 137 { // Polygon
 		// TODO
 	} else {
-		return "", errors.Wrap(errors.New("You should provide a valid chainID"), "Invalid chainID")
+		log.Error("Invalid chainID or API KEY. chainID:", chainID, "API KEY:", apiKey, "contractAddress", contractAddress)
+		return "", errors.Wrap(errors.New("Check the input"), "Fail to checkChainIDAndGetReqURL")
 	}
 
 	return requestURL, nil
@@ -181,7 +190,8 @@ func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common
 func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Address) ([]byte, error) {
 	requestURL, err := checkChainIDAndGetReqURL(apiKey, chainID, contractAddress)
 	if err != nil {
-		return []byte{}, errors.Wrap(errors.New("Please check the chainID"), "Invalid chainID")
+		log.Error("Invalid requestURL:", requestURL)
+		return []byte{}, errors.Wrap(errors.New("Please check the requestURL"), "Invalid requestURL")
 	}
 
 	//////////////////////////////////////// Proxy ////////////////////////////////////////////////////////////////
@@ -201,24 +211,36 @@ func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Ad
 	// NOTICE: If you don't need a proxy client, you should use this code:
 	// response, err := http.Get(requestURL)
 
-	// Sending GET requests using clients with proxies
-	response, err := client.Get(requestURL)
-	if err != nil {
-		return []byte{}, errors.Wrap(errors.New("Fail to send a request"), "Request fail")
+	// Wait and retry if fail to get data from Etherscan
+	var response *http.Response
+	maxRetries := 5 // maximum number of retries
+	for i := 0; i < maxRetries; i++ {
+		// Sending GET requests using clients with proxies
+		response, err = client.Get(requestURL)
+		if err == nil {
+			break // Success, exit loop
+		}
+		time.Sleep(1 * time.Second) // Wait for 1 second before retrying
 	}
 	defer response.Body.Close()
+	if err != nil {
+		log.Error("Timeout: Fail to fetch ABI from Etherscan. ChainID:", chainID, "contractAddress:", contractAddress)
+		return nil, errors.Wrap(errors.New("Fail to fetch ABI from Etherscan"), "Timeout")
+	}
 	//////////////////////////////////////// Proxy ////////////////////////////////////////////////////////////////
 
 	// Read response content
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return []byte{}, errors.Wrap(errors.New("Fail to get the response"), "Response fail")
+		log.Error("Fail to Read response content. ChainID:", chainID, "contractAddress:", contractAddress)
+		return []byte{}, errors.Wrap(errors.New("Fail to Read response content"), "Read response fail")
 	}
 
 	// Parsing JSON data
 	var apiResponse ApiResponse
 	err = json.Unmarshal(body, &apiResponse)
 	if err != nil {
+		log.Error("Fail to parsing JSON data. ChainID:", chainID, "contractAddress:", contractAddress)
 		return []byte{}, errors.Wrap(errors.New("Fail to parsing JSON data"), "Parse fail")
 	}
 
@@ -226,14 +248,16 @@ func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Ad
 }
 
 // @dev Query a contract's RuntimeCode
-func queryRuntimeCode(rpcUrl string, chainID int, contractAddress common.Address) ([]byte, error) {
+func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, error) {
 	client, err := ethclient.Dial(rpcUrl)
 	if err != nil {
+		log.Error("Fail to connect to the node. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
 		return nil, errors.Wrap(errors.New("Fail to connect to the node"), "Connect fail")
 	}
 
 	bytecode, err := client.CodeAt(context.Background(), contractAddress, nil) // nil: the newest block
 	if err != nil {
+		log.Error("Fail to get the RuntimeCode. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
 		return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
 	}
 

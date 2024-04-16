@@ -61,13 +61,13 @@ The function should perform the following steps:
 
 ## Error Handing and Logging
 
-- [ ] If there is a timeout on Etherscan, wait and retry
-- [ ] Handle errors gracefully and return appropriate error messages from the GetABI function
-- [ ] Log errors and key events using the logrus logging package with the following log levels:
-  - [ ] Error: For critical errors that prevent the function from executing properly
-  - [ ] Warning: For non-critical issues or unexpected behavior
-  - [ ] Info: For important events or milestones during the execution
-  - [ ] Log the input parameters, retrieved ABI, and any error messages for debugging purposes
+- [x] If there is a timeout on Etherscan, wait and retry
+- [x] Handle errors gracefully and return appropriate error messages from the GetABI function
+- [x] Log errors and key events using the logrus logging package with the following log levels:
+  - [x] Error: For critical errors that prevent the function from executing properly
+  - [x] Warning: For non-critical issues or unexpected behavior
+  - [x] Info: For important events or milestones during the execution
+  - [x] Log the input parameters, retrieved ABI, and any error messages for debugging purposes
 
 ## Performance
 
