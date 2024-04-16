@@ -182,15 +182,11 @@ func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common
 	if chainID == 1 { // Ethereum
 		requestURL = fmt.Sprintf("https://api.etherscan.io/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
 	} else if chainID == 56 { // BSC
-		// TODO
+		requestURL = fmt.Sprintf("https://api.bscscan.com/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
 	} else if chainID == 42161 { // Arbitrum
-		// TODO
-	} else if chainID == 8453 { // Base
-		// TODO
-	} else if chainID == 43114 { // Avalanche
-		// TODO
+		requestURL = fmt.Sprintf("https://api.arbiscan.io/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
 	} else if chainID == 137 { // Polygon
-		// TODO
+		requestURL = fmt.Sprintf("https://api.polygonscan.com/api?module=contract&action=getabi&address=%s&apikey=%s", contractAddress, apiKey)
 	} else {
 		log.Error("Invalid chainID or API KEY. chainID:", chainID, "API KEY:", apiKey, "contractAddress", contractAddress)
 		return "", errors.Wrap(errors.New("Check the input"), "Fail to checkChainIDAndGetReqURL")

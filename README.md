@@ -14,7 +14,7 @@ type FetcherCli struct {
 func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address) ([]byte, error) {
 ```
 
-The program will retrieve ABI from blockchain browsers corresponding to different chains and store it in the database. Now support Ethereum, BSC, Arbitrum, Base, Avalanche, Polygon. (TODO: only support Ethereum now)
+The program will retrieve ABI from blockchain browsers corresponding to different chains and store it in the database. Now support Ethereum, BSC, Arbitrum, Polygon. 
 
 We use a cache to increase access speed. Follow the sequence and strategy shown in the figure when querying ABI concurrently:
 
