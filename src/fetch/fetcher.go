@@ -31,8 +31,8 @@ type ApiResponse struct {
 // FetcherCli
 // @dev Config for fetching the data from Etherscan
 type FetcherCli struct {
-	ApiKey string
-	RpcUrl string
+	ApiKey string // Etherscan
+	RpcUrl string // Blockchain node RPC
 	mu     sync.RWMutex
 }
 

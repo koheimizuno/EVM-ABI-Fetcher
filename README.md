@@ -1,107 +1,76 @@
-# ABI Caching Project
+# EVM-ABI-Fetcher
 
-> The `README.md` will be updated when the project is completed
+## The design choices
+
+I will bind `GetABIatStartOfBlock()` to a structure named `FetcherCli`, so that the core interface is: 
+
+```go
+type FetcherCli struct {
+	ApiKey string // Etherscan
+	RpcUrl string // Blockchain node RPC
+	mu     sync.RWMutex
+}
+
+func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address) ([]byte, error) {
+```
+
+The program will retrieve ABI from blockchain browsers corresponding to different chains and store it in the database. Now support Ethereum, BSC, Arbitrum, Base, Avalanche, Polygon. (TODO: only support Ethereum now)
+
+We use a cache to increase access speed. Follow the sequence and strategy shown in the figure when querying ABI concurrently:
 
 ![image-20240415085028979](README/image-20240415085028979.png)
 
-## Objective
+Note that if multiple threads query ABI for the same contract at the same time, ABI may be repeatedly inserted into the cache. Our solution is check twice: use mutexes and check again after obtaining the lock to prevent duplicate insert in the cache.
+But we do not do this protection for the database. Reasons: the code redundancy, which may lead to a decrease in speed; The probability of duplicate insertion into the database is low; Even if there are multiple identical pieces of data in the database, it will not affect the normal operation of the program, only increasing the burden on the database slightly.
 
-The goal of this project is to cache smart contract ABIs in a database and provide a function to retrieve the ABI given a chain ID, contract address, and block number. The function should perform lazy fetching and caching to optimize performance.
+At the beginning of the program, due to the lack of data in the database and cache, the query speed will be slow (RPC calls consume a lot of time). When the program runs for a period of time and stores data in the database and cache, the speed of ABI queries will be very fast. 
 
-## Database Schema
+Since the second test, the data has been cached in the database. Therefore, when we called `TestGetABIatStartOfBlockInMultipleThreads_NotContainEOA() ` for testing, the query time was only 0.03 seconds (30 milliseconds, less than the expected 100 milliseconds).
 
-Create a database table using GORM and SQLite3 with the following schema:
+The test of the program should have similar output:
 
-- [x] Table 1:
-  - [x] contract bytecode unique identifier(uuid or int)
-  - [x] contract bytecode(hex or bytea)
+![image-20240416213321824](README/image-20240416213321824.png)
 
-- [x] Table 2:
-  - [x] function signature unique identifier(uuid or int)
-  - [ ] function signature(hex or bytea, 4bytes)
-  - [x] function ABI(json string)
-- [x] Table 3:
-  - [x] chainID(int)
-  - [x] contract address(bytea or hex)
-  - [x] contract bytecode unique identifier(uuid or int)
-  - [x] function signature unique identifier(uuid o int)
-  - [ ] deployedAt <= (work on this only if you finished all other tasks)
-    - [ ] block number
-    - [ ] txIndex
-  - [ ] destructedAt <= (work on this only if you finished all other tasks)
-    - [ ] block number
-    - [ ] txIndex
+For ease of use and debugging, we have returned errors in the program and printed out logs.
 
-## Get ABI Function (In GoLand)
+## assumptions
 
-- [x] Implement a function with the following signature:
+- Before use, it is necessary to supplement the `.env` file.
+- If the queried addresses are all open source contracts, the query speed will be very fast when the program runs stably
+- If the queried address is EOA or has not been verified, an error is returned.
+- EOA and unverified contracts will not be stored in the database. Therefore, if these addresses are queried again, they will still be queried through Etherscan's API, which will consume a lot of time.
+- The generated data will be stored in a file named `ABIs.db`.
+- Implementing least recently used (LRU) using bidirectional linked lists and maps.
+- To prevent duplicate insertion of data into the cache, we perform a secondary check on the cache when obtaining RWMutex(before inserting the data).
 
-```go
-func GetABIAtStartOfBlock(chainID int, contractAddress common.Address, block *big.Int) ([]byte, error)
-=========>
-func GetABIAtStartOfBlock(chainID int, contractAddress common.Address) ([]byte, error)
-```
+## any dependencies
 
-The function should perform the following steps:
+- Log: github.com/sirupsen/logrus
+- Error: github.com/pkg/errors
+- Fetch: github.com/ethereum/go-ethereum/common, github.com/ethereum/go-ethereum/ethclient
+- Other stuff 
 
-- [x] Check if the ABI exists in the database for the given chainID, contract address, and function signature.
 
-  > If found, return the ABI from the database
 
-- [x] If the ABi is not found in the database, query Etherscan to retrieve the ABI
 
-  > If Etherscan returns the ABI, store it in the database and return it
 
-- [x] If Etherscan does not have the ABI, return an appropriate error
 
-## Caching
 
-- [x] Implement an in-memory cache using a map to store the most recently queried ABIs.
-- [x] Use a cache size of 1000 entries
-- [x] Implement a least recently used(LRU) eviction policy to remove the least recently accessed entries when the cache reaches its maximum size.
-- [x] Ensure thread-safety for concurrent access to the cache using a sync.RWMutex
 
-## Error Handing and Logging
 
-- [x] If there is a timeout on Etherscan, wait and retry
-- [x] Handle errors gracefully and return appropriate error messages from the GetABI function
-- [x] Log errors and key events using the logrus logging package with the following log levels:
-  - [x] Error: For critical errors that prevent the function from executing properly
-  - [x] Warning: For non-critical issues or unexpected behavior
-  - [x] Info: For important events or milestones during the execution
-  - [x] Log the input parameters, retrieved ABI, and any error messages for debugging purposes
 
-## Performance
 
-- [ ] Optimize database queries by creating appropriate indexes on the ChainID, ContractAddress, and FuncSignature columns using GORM
-- [x] Implement caching to minimize the number of database queries and external API calls
-- [x] Aim for a maximum response time of 100ms for the GetABI function
 
-## Testing and Validation
 
-- [x] Unit Tests:
-  - [x] Write unit test using the `testing` package in Go to cover the core functionality of the GetABI function
-  - [x] Test scenarios where the ABI is found in the database and retrieved from Etherscan
-  - [x] Test error handling for scenarios where the ABI is not found or Etherscan returns an error
-- [ ] Integration Tests:
-  - [x] Write integration test to verify the interaction between the GetABI function, the database, and Etherscan
-  - [x] Test the caching mechanism to ensure that frequently accessed ABIs are retrieved from the cache
-  - [ ] Ensure that the proxy contract table is properly populated during the tests
-- [x] Validation:
-  - [x] Compare the retrieved ABIs with the expected ABIs from reliable sources to ensure correctness
-  - [x] Handle any discrepancies or inconsistencies between the retrieved ABIs and the expected ABIs
 
-## Deliverables
 
-- [x] Pull Request on Github
-- [x] Go source code for the GetABI function and associated helper functions
-- [x] Unit and interation test suite using the `testing` package
-- [ ] Documentation(README.md) explaining the design choices, assumptions, and any dependencies
 
-## Timeline
 
-- [x] Day 1: Set up the development environment, create the database schema using GORM, and implement the basic GetABI function
-- [x] Day 2: integrate Etherscan for ABI retrieval and implement caching using a map and sync.RWMutex
-- [ ] Day 3-4: Conduct through testing validation, and performance optimization
-- [ ] Day 5: Prepare documentation, conduct final code review, and address any remaining issues
+
+
+
+
+
+
+
 
