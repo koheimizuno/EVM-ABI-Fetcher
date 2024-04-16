@@ -37,6 +37,8 @@ Create a database table using GORM and SQLite3 with the following schema:
 - [x] Implement a function with the following signature:
 
 ```go
+func GetABIAtStartOfBlock(chainID int, contractAddress common.Address, block *big.Int) ([]byte, error)
+=========>
 func GetABIAtStartOfBlock(chainID int, contractAddress common.Address) ([]byte, error)
 ```
 
@@ -72,34 +74,34 @@ The function should perform the following steps:
 ## Performance
 
 - [ ] Optimize database queries by creating appropriate indexes on the ChainID, ContractAddress, and FuncSignature columns using GORM
-- [ ] Implement caching to minimize the number of database queries and external API calls
-- [ ] Aim for a maximum response time of 100ms for the GetABI function
+- [x] Implement caching to minimize the number of database queries and external API calls
+- [x] Aim for a maximum response time of 100ms for the GetABI function
 
 ## Testing and Validation
 
-- [ ] Unit Tests:
-  - [ ] Write unit test using the `testing` package in Go to cover the core functionality of the GetABI function
-  - [ ] Test scenarios where the ABI is found in the database and retrieved from Etherscan
-  - [ ] Test error handling for scenarios where the ABI is not found or Etherscan returns an error
+- [x] Unit Tests:
+  - [x] Write unit test using the `testing` package in Go to cover the core functionality of the GetABI function
+  - [x] Test scenarios where the ABI is found in the database and retrieved from Etherscan
+  - [x] Test error handling for scenarios where the ABI is not found or Etherscan returns an error
 - [ ] Integration Tests:
-  - [ ] Write integration test to verify the interaction between the GetABI function, the database, and Etherscan
-  - [ ] Test the caching mechanism to ensure that frequently accessed ABIs are retrieved from the cache
+  - [x] Write integration test to verify the interaction between the GetABI function, the database, and Etherscan
+  - [x] Test the caching mechanism to ensure that frequently accessed ABIs are retrieved from the cache
   - [ ] Ensure that the proxy contract table is properly populated during the tests
-- [ ] Validation:
-  - [ ] Compare the retrieved ABIs with the expected ABIs from reliable sources to ensure correctness
-  - [ ] Handle any discrepancies or inconsistencies between the retrieved ABIs and the expected ABIs
+- [x] Validation:
+  - [x] Compare the retrieved ABIs with the expected ABIs from reliable sources to ensure correctness
+  - [x] Handle any discrepancies or inconsistencies between the retrieved ABIs and the expected ABIs
 
 ## Deliverables
 
-- [ ] Pull Request on Github
-- [ ] Go source code for the GetABI function and associated helper functions
-- [ ] Unit and interation test suite using the `testing` package
+- [x] Pull Request on Github
+- [x] Go source code for the GetABI function and associated helper functions
+- [x] Unit and interation test suite using the `testing` package
 - [ ] Documentation(README.md) explaining the design choices, assumptions, and any dependencies
 
 ## Timeline
 
 - [x] Day 1: Set up the development environment, create the database schema using GORM, and implement the basic GetABI function
-- [ ] Day 2: integrate Etherscan for ABI retrieval and implement caching using a map and sync.RWMutex
+- [x] Day 2: integrate Etherscan for ABI retrieval and implement caching using a map and sync.RWMutex
 - [ ] Day 3-4: Conduct through testing validation, and performance optimization
 - [ ] Day 5: Prepare documentation, conduct final code review, and address any remaining issues
 

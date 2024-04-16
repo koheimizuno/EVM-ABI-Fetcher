@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/google/uuid"
+	"github.com/petermattis/goid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -49,7 +50,7 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// [1. In memory]
 	abi, isFound := cache.Get(chainID, contractAddress)
 	if isFound {
-		log.Info("Found ABI in cache, length:", len(abi))
+		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abi))
 		return abi, nil
 	}
 
@@ -69,22 +70,23 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 		if result.Error == nil { // result.Error is equal to nil means that there is an ABI in the database of the input contractAddress
 			///////////////////// Write Lock //////////////////////////
 			f.mu.Lock()
+			defer f.mu.Unlock()
 
 			// Second check to prevent this situation: Multiple threads complete read operations simultaneously and then queue up for write operations,
 			// which can cause duplicate cache writes
 			abiInSecondCheck, isFoundInSecondCheck := cache.Get(chainID, contractAddress)
 			if isFoundInSecondCheck {
-				log.Info("Found ABI in cache, length:", len(abiInSecondCheck))
+				log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abiInSecondCheck))
+
 				return abiInSecondCheck, nil
 			} else {
 				// Set to cache
 				cache.Set(chainID, contractAddress, []byte(signature.FunctionABI))
 			}
 
-			f.mu.Unlock()
 			///////////////////// Write Lock //////////////////////////
 
-			log.Info("Found ABI in DB, length:", len(signature.FunctionABI))
+			log.Info("Thread ", goid.Get(), ". Found ABI in DB, length:", len(signature.FunctionABI))
 			return []byte(signature.FunctionABI), nil
 		}
 	}
@@ -92,23 +94,34 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// [3. Etherscan] If the ABi is not found in the database, query Etherscan to retrieve the ABI
 	//              If Etherscan returns the ABI, store it in the database and return it
 
-	abi, err := queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
+	// Create a new record of ContractBytecode
+	bytecode, err := queryRuntimeCode(f.RpcUrl, contractAddress)
+	if string(bytecode) == "" {
+		log.Error("Thread ", goid.Get(), ".The address is an EOA")
+		return nil, errors.Wrap(errors.New("Check the address you input"), "Not contract")
+	}
+
+	// If tht contract has not been verified, it will return: Contract source code not verified
+	abi, err = queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
+	if string(abi) == "Contract source code not verified" {
+		log.Error("Thread ", goid.Get(), ".The contract has not been verified")
+		return nil, errors.Wrap(errors.New("Not verify"), "Not verify")
+	}
+
 	// If Etherscan does not have the ABI, return an appropriate error
 	if err != nil {
-		log.Error("Fail to fetch ABI by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
+		log.Error("Thread ", goid.Get(), ". Fail to fetch ABI by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
 		return nil, errors.Wrap(errors.New("Fail to fetch ABI by Etherscan API"), "Fetch fail")
 	}
 
-	log.Info("Fetch ABI in Etherscan, length:", len(abi))
+	log.Info("Thread ", goid.Get(), ". Fetch ABI in Etherscan, length:", len(abi))
 
 	// Prepare some UUID
 	functionSignatureID := uuid.New()
 	contractBytecodeID := uuid.New()
 
-	// Create a new record of ContractBytecode
-	bytecode, err := queryRuntimeCode(f.RpcUrl, contractAddress)
 	if err != nil {
-		log.Error("Fail to fetch Bytecode by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
+		log.Error("Thread ", goid.Get(), ". Fail to fetch Bytecode by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
 		return nil, errors.Wrap(errors.New("Fail to fetch Bytecode by Etherscan API"), "Fetch fail")
 	}
 
@@ -119,6 +132,7 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	// This situation will not occur multiple times since only has a small probability of occurring when writing to the database for the first time.
 
 	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	newContractBytecode := myDB.ContractBytecode{
 		ID:       contractBytecodeID,
@@ -145,19 +159,18 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 
 	abiInSecondCheck, isFound := cache.Get(chainID, contractAddress)
 	if isFound {
-		log.Info("Found ABI in cache, length:", len(abiInSecondCheck))
+		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abiInSecondCheck))
 		return abiInSecondCheck, nil
 	} else {
 		cache.Set(chainID, contractAddress, abi)
 	}
 	///////////////////// Write Lock //////////////////////////
 
-	f.mu.Unlock()
-
 	return abi, nil
 }
 
 // @dev Check ChainID and get the format the request url
+// @notice Only support Ethereum network now
 // @notice Sometimes we could fetch data in Etherscan without an API KEY
 func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common.Address) (string, error) {
 	var requestURL string
