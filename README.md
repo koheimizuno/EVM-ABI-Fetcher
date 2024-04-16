@@ -19,7 +19,7 @@ Create a database table using GORM and SQLite3 with the following schema:
 - [x] Table 2:
   - [x] function signature unique identifier(uuid or int)
   - [ ] function signature(hex or bytea, 4bytes)
-  - [ ] function ABI(json string)
+  - [x] function ABI(json string)
 - [x] Table 3:
   - [x] chainID(int)
   - [x] contract address(bytea or hex)
@@ -54,10 +54,10 @@ The function should perform the following steps:
 
 ## Caching
 
-- [ ] Implement an in-memory cache using a map to store the most recently queried ABIs.
-- [ ] Use a cache size of 1000 entries
-- [ ] Implement a least recently used(LRU) eviction policy to remove the least recently accessed entries when the cache reaches its maximum size.
-- [ ] Ensure thread-safety for concurrent access to the cache using a sync.RWMutex
+- [x] Implement an in-memory cache using a map to store the most recently queried ABIs.
+- [x] Use a cache size of 1000 entries
+- [x] Implement a least recently used(LRU) eviction policy to remove the least recently accessed entries when the cache reaches its maximum size.
+- [x] Ensure thread-safety for concurrent access to the cache using a sync.RWMutex
 
 ## Error Handing and Logging
 
@@ -72,7 +72,7 @@ The function should perform the following steps:
 ## Performance
 
 - [ ] Optimize database queries by creating appropriate indexes on the ChainID, ContractAddress, and FuncSignature columns using GORM
-- [ ] Implement cacheing to minimize the number of database queries and external API calls
+- [ ] Implement caching to minimize the number of database queries and external API calls
 - [ ] Aim for a maximum response time of 100ms for the GetABI function
 
 ## Testing and Validation
