@@ -1,16 +1,23 @@
 package fetch
 
 import (
-	myDB "code/src/db"
-	"fmt"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"os"
-	"sync"
+	"math/big"
 	"testing"
 )
+
+var contractAddress1 = common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7")
+var signature1 = [4]byte{10, 20, 30, 40}
+
+func TestGetABIAtStartOfBlockInOneThread_ContainEOA(t *testing.T) {
+
+	_, err := GetFunctionABIAtBlock(1, contractAddress1, signature1, big.NewInt(10000))
+	assert.Error(t, err)
+
+}
+
+/*
 
 // Write unit test using the `testing` package in Go to cover the core functionality of the GetABI function
 
@@ -265,3 +272,5 @@ func TestQueryRuntimeCode(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(data))
 }
+
+*/

@@ -36,6 +36,14 @@ type ContractDeployment struct {
 	ContractBytecodeID uuid.UUID `gorm:"type:uuid"` // contract bytecode unique identifier(uuid or int)
 }
 
+// SearchEtherscan represents a table structure for blockchain scanning options
+type SearchEtherscan struct {
+	ChainID         int    `gorm:"type:int;index"` // Chain ID as integer
+	ContractAddress []byte `gorm:"type:blob"`      // Contract address in byte array or hex
+	Time            int    `gorm:"type:int"`       // Time as integer (e.g., UNIX timestamp)
+	ShouldSearch    bool   `gorm:"type:boolean"`   // Flag to indicate if a search should be performed
+}
+
 var log = logrus.New()
 
 // InitDatabase
@@ -52,8 +60,9 @@ func InitDatabase() (db *gorm.DB) {
 	// Check if tables exist and migrate if they do not
 	if !db.Migrator().HasTable(&ContractBytecode{}) ||
 		!db.Migrator().HasTable(&FunctionSignature{}) ||
+		!db.Migrator().HasTable(&SearchEtherscan{}) ||
 		!db.Migrator().HasTable(&ContractDeployment{}) {
-		db.AutoMigrate(&ContractBytecode{}, &FunctionSignature{}, &ContractDeployment{})
+		db.AutoMigrate(&ContractBytecode{}, &FunctionSignature{}, &ContractDeployment{}, &SearchEtherscan{})
 		fmt.Println("Init the data successfully!")
 	}
 

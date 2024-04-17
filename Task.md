@@ -27,6 +27,12 @@ Create a database table using GORM and SQLite3 with the following schema:
   - [x] chainID(int)
   - [x] contract address(bytea or hex)
   - [x] contract bytecode unique identifier(uuid or int)
+- [ ] Table 4:
+  - [ ] chainID(int)
+  - [ ] contract address(bytea or hex)
+  - [ ] time(int)
+  - [ ] shouldSearch(bool)
+
 
 ## Get ABI Function (In GoLand)
 

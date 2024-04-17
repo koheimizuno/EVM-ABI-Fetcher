@@ -44,8 +44,7 @@ func NewABICache() *ABICache {
 // Notice: chainID+contractAddress+signature => return functionABI
 // Notice: chainID+contractAddress+"Search for contractABI" => return contractABI
 func (c *ABICache) Get(chainID int, contractAddress common.Address, signature string) (functionABI *abi.Method, contractABI *abi.ABI, isFound bool) {
-
-	key := cacheKey(chainID, contractAddress, signature)
+	key := CacheKey(chainID, contractAddress, signature)
 	if element, found := c.cache[key]; found {
 		c.list.MoveToFront(element)
 		return element.Value.(*CacheItem).FunctionABI, element.Value.(*CacheItem).ContractABI, true
@@ -56,7 +55,7 @@ func (c *ABICache) Get(chainID int, contractAddress common.Address, signature st
 // Set
 // @dev Add an item to the cache
 func (c *ABICache) Set(chainID int, contractAddress common.Address, functionABI *abi.Method, contractABI *abi.ABI, signature string) {
-	key := cacheKey(chainID, contractAddress, signature)
+	key := CacheKey(chainID, contractAddress, signature)
 
 	newItem := &CacheItem{
 		ChainID:         chainID,
@@ -80,13 +79,15 @@ func (c *ABICache) evict() {
 	if element := c.list.Back(); element != nil {
 		c.list.Remove(element)
 		item := element.Value.(*CacheItem)
-		delete(c.cache, cacheKey(item.ChainID, item.ContractAddress, item.Signature))
+		delete(c.cache, CacheKey(item.ChainID, item.ContractAddress, item.Signature))
 	}
 }
 
 // cacheKey
 // @dev Generate key for cache mapping
-func cacheKey(chainID int, address common.Address, signature string) int64 {
+// To find functionABI: signature => signature
+// To find contractABI: signature => ""
+func CacheKey(chainID int, address common.Address, signature string) int64 {
 
 	input := fmt.Sprintf("%d-%s-%s", chainID, address.Hex(), signature)
 

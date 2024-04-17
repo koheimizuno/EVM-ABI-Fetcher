@@ -4,19 +4,20 @@ import (
 	myCache "code/src/cache"
 	myDB "code/src/db"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/google/uuid"
 	"github.com/petermattis/goid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"gorm.io/gorm"
 	"io"
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 )
@@ -39,6 +40,133 @@ type FetcherCli struct {
 
 var cache = *myCache.NewABICache()
 var log = logrus.New()
+var f = FetcherCli{ApiKey: os.Getenv("API_KEY"), RpcUrl: os.Getenv("RPC_URL")}
+
+var db = myDB.InitDatabase()
+
+// @dev try to get the function ABI
+func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]byte, block *big.Int) (*abi.Method, error) {
+	// [1. In memory]
+	functionABI, _, isFound := cache.Get(chainID, contractAddress, string(sig[:]))
+	if isFound {
+		log.Info("[Thread ", goid.Get(), "] Found functionABI in cache")
+		return functionABI, nil
+	}
+
+	// [2. In DB] Check if the functionABI exists in the database for the given chainID, contract address and sig
+
+	ID := myCache.CacheKey(chainID, contractAddress, string(sig[:]))
+
+	var functionSignature myDB.FunctionSignature
+	if err := db.Where("id = ?", ID).First(&functionSignature).Error; err != nil { // not found ABI in db
+		log.Error("not found")
+
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		// logic: not found the ABI in DB => if there is a shouldEtherscan item in DB?
+		//           1. no: create a new shouldEtherscan item for the given chainID and contractAddress
+		//           2. yes: check that whether now passes 5 days since the last time or not?
+		//                1. no: do nothing
+		//                2. yes: set searchEtherscan to true
+
+		var searchEtherscan myDB.SearchEtherscan
+		now := time.Now().Unix()
+
+		// search in DB
+		result := db.Where("chain_id = ? AND contract_address = ?", chainID, contractAddress).First(&searchEtherscan)
+
+		if result.Error != nil { // not found the searchEtherscan item in db
+			// create a new item
+			newRecord := myDB.SearchEtherscan{
+				ChainID:         chainID,
+				ContractAddress: contractAddress.Bytes(),
+				Time:            int(now),
+				ShouldSearch:    true, // should search in Etherscan
+			}
+			err = db.Create(&newRecord).Error
+			if err != nil {
+				return nil, errors.Wrap(errors.New("Fail to create an item in db"), "Create fail")
+			}
+		} else { // the record exists
+			if now-int64(searchEtherscan.Time) >= 5*24*60*60 {
+				// pass 5 days, update shouldSearch to true. so the robot will search ABi from Etherscan
+				err = db.Model(&searchEtherscan).Update("should_search", true).Error
+				if err != nil {
+					return nil, errors.Wrap(errors.New("Fail to update the item in db"), "Update fail")
+				}
+			}
+		}
+
+		return nil, errors.Wrap(errors.New("Waiting robot to search from Etherscan"), "Not Found")
+	} else { // found in db
+
+		///////////////////////////// update the cache /////////////////////////////////////////
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		// define the return data
+		var resultFunctionABI *abi.Method
+		var resultContractABI *abi.ABI
+
+		// Second check
+		functionABISecondCheck, _, isFoundSecondCheck := cache.Get(chainID, contractAddress, string(sig[:]))
+		if isFoundSecondCheck { // If found functionABI in cache
+			log.Info("[Thread ", goid.Get(), "] Second check found functionABI in cache")
+			return functionABISecondCheck, nil
+		} else { // not found in cache, set the cache
+
+			// define the data to search in db
+			var resultContractABIID = functionSignature.ContractBytecodeID
+			var contractBytecode myDB.ContractBytecode
+			_ = db.Where("id = ?", resultContractABIID).First(&contractBytecode)
+
+			// unmarshal so that we can return the data
+			_ = json.Unmarshal([]byte(functionSignature.FunctionABI), resultFunctionABI)
+			_ = json.Unmarshal([]byte(contractBytecode.ContractABI), resultContractABI)
+
+			cache.Set(
+				chainID,
+				contractAddress,
+				resultFunctionABI,
+				resultContractABI,
+				string(functionSignature.Signature),
+			)
+			return resultFunctionABI, nil
+		}
+		///////////////////////////// update the cache /////////////////////////////////////////
+	}
+
+}
+
+func searchInEtherscan() error {
+	var results []myDB.SearchEtherscan
+	// query the records: shouldSearch = true
+	err := db.Where("should_search = ?", true).Find(&results).Error
+	if err != nil {
+		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
+	}
+
+	for _, item := range results {
+		addressHex := hex.EncodeToString(item.ContractAddress) // 将地址从字节数组转换为十六进制字符串
+		fmt.Printf("ChainID: %d, ContractAddress: %s, Time: %d\n", item.ChainID, addressHex, item.Time)
+
+		var contractAddress common.Address
+		copy(contractAddress[:], item.ContractAddress[:])
+
+		data, err := queryABIFromEtherscan(f.ApiKey, item.ChainID, contractAddress)
+		if err != nil {
+			return errors.Wrap(errors.New("Fail to search item in Etherscan"), "Search fail")
+		}
+
+		var resultContractABI *abi.ABI
+		_ = json.Unmarshal(data, resultContractABI) // get the contractABI
+		// TODO
+		// 将contractABI存入db中；解析contractABI，将各个函数选择器分别存入db中；更新cache；
+		// 将bytecode存入db中
+
+	}
+	return nil
+}
 
 // GetABIAtStartOfBlock
 // @notice We do not use the block parameter for now
@@ -47,6 +175,7 @@ var log = logrus.New()
 // @param contractAddress The contract whose ABI you want to get
 // @param block Get the ABI in a certain block height.
 // TODO
+/*
 func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
 
 	// [1. In memory]
@@ -187,11 +316,7 @@ func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAdd
 
 	return abi, nil
 }
-
-// TODO
-func GetFunctionABIAtBlock(db *gorm.DB, sig [4]byte, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
-	return nil, nil
-}
+*/
 
 // @dev Check ChainID and get the format the request url
 // @notice Only support Ethereum network now

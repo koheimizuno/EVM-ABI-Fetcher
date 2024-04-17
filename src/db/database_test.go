@@ -17,6 +17,7 @@ func setup(t *testing.T) {
 	// Check if a table has been created
 	assert.True(t, db.Migrator().HasTable(&ContractBytecode{}))
 	assert.True(t, db.Migrator().HasTable(&FunctionSignature{}))
+	assert.True(t, db.Migrator().HasTable(&SearchEtherscan{}))
 	assert.True(t, db.Migrator().HasTable(&ContractDeployment{}))
 }
 
@@ -24,6 +25,7 @@ func tearDown() {
 	db.Exec("DELETE FROM contract_bytecodes")
 	db.Exec("DELETE FROM function_signatures")
 	db.Exec("DELETE FROM contract_deployments")
+	db.Exec("DELETE FROM search_etherscans")
 }
 
 func TestContractBytecode(t *testing.T) {
@@ -36,6 +38,20 @@ func TestContractBytecode(t *testing.T) {
 		SourceCode:        "pragma solidity ^0.8.0;",
 		CompileTimeParams: "param1,param2",
 		ContractABI:       "ABI details here",
+	}
+	result := db.Create(&cb)
+	assert.Nil(t, result.Error)
+}
+
+func TestSearchEtherscan(t *testing.T) {
+	setup(t)
+	defer tearDown()
+
+	cb := SearchEtherscan{
+		ChainID:         123,
+		ContractAddress: []byte("123"),
+		Time:            123123,
+		ShouldSearch:    true,
 	}
 	result := db.Create(&cb)
 	assert.Nil(t, result.Error)
