@@ -12,25 +12,26 @@ The goal of this project is to cache smart contract ABIs in a database and provi
 
 Create a database table using GORM and SQLite3 with the following schema:
 
-- [x] Table 1:
-  - [x] contract bytecode unique identifier(uuid or int)
+- [ ] Table 1:
+  - [x] contract bytecode unique identifier(uuid or int) [primary key]
   - [x] contract bytecode(hex or bytea)
-
-- [x] Table 2:
+  - [ ] contract source code ← (work on this only if you finished all other tasks)
+  - [ ] parameters at compile time (e.g., how many rounds of optimisation) ← (work on this only if you finished all other tasks)
+- [ ] Table 2:
   - [x] function signature unique identifier(uuid or int)
+  - [ ] contract bytecode unique identifier (uuid or int) [foreign key]
   - [ ] function signature(hex or bytea, 4bytes)
-  - [x] function ABI(json string)
+  - [ ] function ABI(json string)
 - [x] Table 3:
   - [x] chainID(int)
   - [x] contract address(bytea or hex)
   - [x] contract bytecode unique identifier(uuid or int)
-  - [x] function signature unique identifier(uuid o int)
-  - [ ] deployedAt <= (work on this only if you finished all other tasks)
-    - [ ] block number
-    - [ ] txIndex
-  - [ ] destructedAt <= (work on this only if you finished all other tasks)
-    - [ ] block number
-    - [ ] txIndex
+  - [ ] ~~deployedAt <= (work on this only if you finished all other tasks)~~
+    - [ ] ~~block number~~
+    - [ ] ~~txIndex~~
+  - [ ] ~~destructedAt <= (work on this only if you finished all other tasks)~~
+    - [ ] ~~block number~~
+    - [ ] ~~txIndex~~
 
 ## Get ABI Function (In GoLand)
 
@@ -73,28 +74,28 @@ The function should perform the following steps:
 
 ## Performance
 
-- [ ] Optimize database queries by creating appropriate indexes on the ChainID, ContractAddress, and FuncSignature columns using GORM
+- [ ] Optimize database queries by creating appropriate indexes on the ChainID, ContractAddress, and FuncSignature columns using GORM: Re indexes, we are okay with slow inserts, but we want very fast query speed. Do you create indexes for your tables?
 - [x] Implement caching to minimize the number of database queries and external API calls
 - [x] Aim for a maximum response time of 100ms for the GetABI function
 
 ## Testing and Validation
 
-- [x] Unit Tests:
+- [ ] Unit Tests:
   - [x] Write unit test using the `testing` package in Go to cover the core functionality of the GetABI function
-  - [x] Test scenarios where the ABI is found in the database and retrieved from Etherscan
+  - [ ] Test scenarios where the ABI is found in the database and retrieved from Etherscan. (Lets imagine later, we encountered a transaction, which calls into a contract without ABI. We know the data is “0xAAAA…..“. Now what we can do is, I would look up in table 2, and find all abis matches to 0xAAAA, and try each to see if it can decode the data.)
   - [x] Test error handling for scenarios where the ABI is not found or Etherscan returns an error
 - [ ] Integration Tests:
   - [x] Write integration test to verify the interaction between the GetABI function, the database, and Etherscan
   - [x] Test the caching mechanism to ensure that frequently accessed ABIs are retrieved from the cache
-  - [ ] Ensure that the proxy contract table is properly populated during the tests
+  - [ ] ~~Ensure that the proxy contract table is properly populated during the tests~~
 - [x] Validation:
   - [x] Compare the retrieved ABIs with the expected ABIs from reliable sources to ensure correctness
   - [x] Handle any discrepancies or inconsistencies between the retrieved ABIs and the expected ABIs
 
 ## Deliverables
 
-- [x] Pull Request on Github
-- [x] Go source code for the GetABI function and associated helper functions
+- [ ] Pull Request on Github
+- [ ] Go source code for the GetABI function and associated helper functions
 - [x] Unit and interation test suite using the `testing` package
 - [x] Documentation(README.md) explaining the design choices, assumptions, and any dependencies
 

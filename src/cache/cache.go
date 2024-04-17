@@ -11,7 +11,9 @@ import (
 type CacheItem struct {
 	ChainID         int
 	ContractAddress common.Address
-	ABI             []byte
+	Signature       string // E.g. transfer(address,uint256) => we store 0xa9059cbb
+	FunctionABI     []byte // the ABI of the Signature.
+	ContractABI     []byte // The whole ABI of the contract
 }
 
 // ABICache
@@ -35,25 +37,28 @@ func NewABICache() *ABICache {
 
 // Get
 // @dev Retrieve an item from the cache
-func (c *ABICache) Get(chainID int, contractAddress common.Address) ([]byte, bool) {
+// @return FunctionABI, ContractABI, isFound
+func (c *ABICache) Get(chainID int, contractAddress common.Address, signature string) ([]byte, []byte, bool) {
 
-	key := cacheKey(chainID, contractAddress)
+	key := cacheKey(chainID, contractAddress, signature)
 	if element, found := c.cache[key]; found {
 		c.list.MoveToFront(element)
-		return element.Value.(*CacheItem).ABI, true
+		return element.Value.(*CacheItem).FunctionABI, element.Value.(*CacheItem).ContractABI, true
 	}
-	return nil, false
+	return nil, nil, false
 }
 
 // Set
 // @dev Add an item to the cache
-func (c *ABICache) Set(chainID int, contractAddress common.Address, abi []byte) {
-	key := cacheKey(chainID, contractAddress)
+func (c *ABICache) Set(chainID int, contractAddress common.Address, functionABI []byte, contractABI []byte, signature string) {
+	key := cacheKey(chainID, contractAddress, signature)
 
 	newItem := &CacheItem{
 		ChainID:         chainID,
 		ContractAddress: contractAddress,
-		ABI:             abi,
+		Signature:       signature,
+		FunctionABI:     functionABI,
+		ContractABI:     contractABI,
 	}
 	element := c.list.PushFront(newItem)
 	c.cache[key] = element
@@ -70,12 +75,12 @@ func (c *ABICache) evict() {
 	if element := c.list.Back(); element != nil {
 		c.list.Remove(element)
 		item := element.Value.(*CacheItem)
-		delete(c.cache, cacheKey(item.ChainID, item.ContractAddress))
+		delete(c.cache, cacheKey(item.ChainID, item.ContractAddress, item.Signature))
 	}
 }
 
 // cacheKey
 // @dev Generate key for cache mapping
-func cacheKey(chainID int, address common.Address) string {
-	return fmt.Sprintf("%d-%s", chainID, address.Hex())
+func cacheKey(chainID int, address common.Address, signature string) string {
+	return fmt.Sprintf("%d-%s-%s", chainID, address.Hex(), signature)
 }

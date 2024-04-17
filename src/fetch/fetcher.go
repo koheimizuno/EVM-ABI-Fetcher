@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"sync"
@@ -45,7 +46,7 @@ var log = logrus.New()
 // @param chainID The chain ID
 // @param contractAddress The contract whose ABI you want to get
 // @param block Get the ABI in a certain block height.
-func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddress common.Address) ([]byte, error) {
+func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
 
 	// [1. In memory]
 	abi, isFound := cache.Get(chainID, contractAddress)
@@ -167,6 +168,11 @@ func (f *FetcherCli) GetABIAtStartOfBlock(db *gorm.DB, chainID int, contractAddr
 	///////////////////// Write Lock //////////////////////////
 
 	return abi, nil
+}
+
+// TODO
+func GetFunctionABIAtBlock(db *gorm.DB, sig [4]byte, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
+	return nil, nil
 }
 
 // @dev Check ChainID and get the format the request url
