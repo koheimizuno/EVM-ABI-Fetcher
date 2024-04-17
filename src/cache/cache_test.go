@@ -1,64 +1,62 @@
 package cache
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-var signature = "0xa9059cbb"
-var functionABI = "{ \"constant\": false, \"inputs\": [], \"name\": \"world\", \"outputs\": [ { \"name\": \"\", \"type\": \"uint256\" } ], \"payable\": true, \"stateMutability\": \"payable\", \"type\": \"function\" }"
-var contractABI = "[\n\t{\n\t\t\"constant\": true,\n\t\t\"inputs\": [],\n\t\t\"name\": \"hello\",\n\t\t\"outputs\": [\n\t\t\t{\n\t\t\t\t\"name\": \"\",\n\t\t\t\t\"type\": \"string\"\n\t\t\t}\n\t\t],\n\t\t\"payable\": false,\n\t\t\"stateMutability\": \"view\",\n\t\t\"type\": \"function\"\n\t},\n\t{\n\t\t\"constant\": false,\n\t\t\"inputs\": [],\n\t\t\"name\": \"world\",\n\t\t\"outputs\": [\n\t\t\t{\n\t\t\t\t\"name\": \"\",\n\t\t\t\t\"type\": \"uint256\"\n\t\t\t}\n\t\t],\n\t\t\"payable\": true,\n\t\t\"stateMutability\": \"payable\",\n\t\t\"type\": \"function\"\n\t}\n]"
-var chainID = 1
-var contractAddress = common.HexToAddress("0x67804f76158410B1C5aE84fED4220E7bf5c1F9dE")
+// Prepare some data that may be used
+var (
+	contractAddress = common.HexToAddress("0xc0ffee254729296a45a3885639AC7E10F9d54979")
+	functionABI     = &abi.Method{Name: "transfer", RawName: "transfer(address,uint256)"}
+	contractABI     = &abi.ABI{Methods: map[string]abi.Method{}}
+	signature       = "transfer(address,uint256)"
+)
 
-// To ensure that the cache is properly initialized
 func TestNewABICache(t *testing.T) {
 	cache := NewABICache()
+	assert.NotNil(t, cache)
 	assert.Equal(t, 1000, cache.capacity)
-	assert.NotNil(t, cache.cache)
 	assert.NotNil(t, cache.list)
+	assert.NotNil(t, cache.cache)
 }
 
-// The normal operation of the Set and Get methods
-func TestCacheSetAndGet(t *testing.T) {
+func TestSetAndGetCacheItem(t *testing.T) {
 	cache := NewABICache()
-	cache.Set(chainID, contractAddress, []byte(functionABI), []byte(contractABI), signature)
+	cache.Set(1, contractAddress, functionABI, contractABI, signature)
 
-	FunctionABIGet, ContractABIGet, isFound := cache.Get(chainID, contractAddress, signature)
-	assert.True(t, isFound)
-	assert.Equal(t, FunctionABIGet, []byte(functionABI))
-	assert.Equal(t, ContractABIGet, []byte(contractABI))
+	// test Getter
+	fetchedMethod, fetchedAbi, found := cache.Get(1, contractAddress, signature)
+	assert.True(t, found)
+	assert.Equal(t, functionABI, fetchedMethod)
+	assert.Equal(t, contractABI, fetchedAbi)
+
+	// Is the test item at the forefront of the cache
+	assert.Equal(t, cache.list.Front().Value.(*CacheItem).Signature, signature)
 }
 
-// LRU logic: When the cache exceeds capacity, the least commonly used will be removed
-func TestCacheEvictionPolicy(t *testing.T) {
+func TestCacheEviction(t *testing.T) {
 	cache := NewABICache()
-	// Fill cache beyond initial capacity
-	for i := 0; i < 1001; i++ {
-		addr := common.HexToAddress(fmt.Sprintf("0x%x", i))
-		cache.Set(i, addr, []byte(functionABI), []byte(contractABI), signature)
-	}
+	cache.capacity = 3 // Set small capacity for easy testing
 
-	// Originally supposed to be 0, the least commonly used,
-	// After the query is completed, 0 is accessed, and the least commonly used becomes 1
-	_, _, _ = cache.Get(0, common.HexToAddress("0x0"), signature)
+	// Fill cache
+	cache.Set(1, contractAddress, functionABI, contractABI, signature)
+	cache.Set(2, contractAddress, functionABI, contractABI, "function2")
+	cache.Set(3, contractAddress, functionABI, contractABI, "function3")
 
-	// When a new data is inserted, 1 will be deleted
-	cache.Set(1234, contractAddress, []byte("123"), []byte("456"), signature)
-	_, _, found := cache.Get(1, common.HexToAddress("0x1"), signature)
-	assert.False(t, found)
-}
+	_, _, _ = cache.Get(1, contractAddress, signature) // the second Item will be the RLU
 
-// Test the independent operation of the Evict method
-func TestEvictFunction(t *testing.T) {
-	cache := NewABICache()
+	// Add the forth item to trigger evict()
+	cache.Set(4, contractAddress, functionABI, contractABI, "function4")
 
-	cache.Set(chainID, contractAddress, []byte(functionABI), []byte(contractABI), signature)
-	cache.evict() // Force eviction regardless of cache size
+	_, _, found := cache.Get(1, contractAddress, signature)
+	assert.False(t, found) // the second Item will be the RLU
 
-	// Check if the element has been deleted
-	_, _, found := cache.Get(chainID, contractAddress, signature)
-	assert.False(t, found)
+	_, _, found = cache.Get(2, contractAddress, "function2")
+	assert.True(t, found) // the first item is still exist
+
+	_, _, found = cache.Get(3, contractAddress, "function3")
+	assert.True(t, found) // the third item is still exist
 }

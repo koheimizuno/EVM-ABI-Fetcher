@@ -13,18 +13,19 @@ import (
 type ContractBytecode struct {
 	ID                uuid.UUID `gorm:"type:uuid;primary_key"` // contract bytecode unique identifier(uuid or int)
 	Bytecode          []byte    `gorm:"type:blob"`             // contract bytecode(hex or bytea)
-	SourceCode        string    `gorm:"type:text"`             // contract solidity source code TODO[修改了：增加]
-	CompileTimeParams string    `gorm:"type:text"`             // constructor parameters TODO[修改了：增加]
-	ContractABI       string    `gorm:"type:text"`             // The whole ABI of the contract  TODO[修改了：增加]
+	SourceCode        string    `gorm:"type:text"`             // contract solidity source code
+	CompileTimeParams string    `gorm:"type:text"`             // constructor parameters
+	ContractABI       string    `gorm:"type:text"`             // The whole ABI of the contract
 }
 
 // FunctionSignature
 // @dev Table 2
+// ID should be: Keccak256[chainID + contractAddress + sig(4bytes)] ==> Take the highest 8 bytes
 type FunctionSignature struct {
-	ID                 uuid.UUID `gorm:"type:uuid;primary_key"` // function signature unique identifier(uuid or int)
-	ContractBytecodeID uuid.UUID `gorm:"type:uuid;index"`       // contract bytecode unique identifier (uuid or int) [foreign key] TODO[修改了：增加]
-	Signature          []byte    `gorm:"type:blob;size:4"`      // function signature(hex or bytea, 4bytes)
-	FunctionABI        string    `gorm:"type:text"`             // function ABI(json string)
+	ID                 int64     `gorm:"type:bigint;primary_key"` // function signature unique identifier(int, 8 bytes)
+	ContractBytecodeID uuid.UUID `gorm:"type:uuid;index"`         // contract bytecode unique identifier (uuid or int) [foreign key]
+	Signature          []byte    `gorm:"type:blob;size:4"`        // function signature(hex or bytea, 4bytes)
+	FunctionABI        string    `gorm:"type:text"`               // function ABI(json string)
 }
 
 // ContractDeployment
@@ -33,7 +34,6 @@ type ContractDeployment struct {
 	ChainID            int       `gorm:"type:int"`  // chainID(int)
 	ContractAddress    []byte    `gorm:"type:blob"` // contract address(bytea or hex)
 	ContractBytecodeID uuid.UUID `gorm:"type:uuid"` // contract bytecode unique identifier(uuid or int)
-	//FunctionSignatureID uuid.UUID `gorm:"type:uuid"` // function signature unique identifier(uuid o int) TODO[修改了: 删除]
 }
 
 var log = logrus.New()

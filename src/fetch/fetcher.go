@@ -46,17 +46,18 @@ var log = logrus.New()
 // @param chainID The chain ID
 // @param contractAddress The contract whose ABI you want to get
 // @param block Get the ABI in a certain block height.
+// TODO
 func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
 
 	// [1. In memory]
-	abi, isFound := cache.Get(chainID, contractAddress)
+	_, contractABI, isFound := cache.Get(chainID, contractAddress, "Search for contractABI")
 	if isFound {
-		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abi))
-		return abi, nil
+		log.Info("Thread ", goid.Get(), ". Found contractABI in cache, length:", len(contractABI))
+		return contractABI, nil
 	}
 
-	// [2. In DB] Check if the ABI exists in the database for the given chainID, contract address, and function signature.
-	//               If found, return the ABI from the database
+	// [2. In DB] Check if the contractABI exists in the database for the given chainID and contract address
+	//               If found, return the contractABI from the database
 
 	addressBytes := contractAddress.Bytes() // Convert Ethereum addresses to a format that can be queried by the database
 
@@ -64,31 +65,36 @@ func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAdd
 	// Query in the database
 	result := db.Where("chain_id = ? AND contract_address = ?", chainID, addressBytes).First(&deployment)
 	if result.Error == nil {
-		// Search for the specific ABI by ContractDeployment.FunctionSignatureID
-		var signature myDB.FunctionSignature
-		// In some cases, there may be multiple identical pieces of data, and we will only take one of them.
-		result = db.Where("id = ?", deployment.FunctionSignatureID).First(&signature)
-		if result.Error == nil { // result.Error is equal to nil means that there is an ABI in the database of the input contractAddress
+		// Search for the specific contractABI by ContractDeployment.ContractBytecodeID
+		var bytecode myDB.ContractBytecode
+		result = db.Where("id = ?", deployment.ContractBytecodeID).First(&bytecode)
+		if result.Error == nil { // result.Error is equal to nil means that there is an contractABI in the database
 			///////////////////// Write Lock //////////////////////////
 			f.mu.Lock()
 			defer f.mu.Unlock()
 
 			// Second check to prevent this situation: Multiple threads complete read operations simultaneously and then queue up for write operations,
 			// which can cause duplicate cache writes
-			abiInSecondCheck, isFoundInSecondCheck := cache.Get(chainID, contractAddress)
-			if isFoundInSecondCheck {
-				log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abiInSecondCheck))
+			_, contractABISecondCheck, isFoundSecondCheck := cache.Get(chainID, contractAddress, "Search for contractABI")
+			if isFoundSecondCheck {
+				log.Info("Thread ", goid.Get(), ". Found contractABISecondCheck in cache, length:", len(contractABISecondCheck))
 
-				return abiInSecondCheck, nil
+				return contractABISecondCheck, nil
 			} else {
-				// Set to cache
-				cache.Set(chainID, contractAddress, []byte(signature.FunctionABI))
+				// Set to cache: We search for contractABI, so this cache item will not contain functionABI or signature
+				cache.Set(
+					chainID,
+					contractAddress,
+					[]byte("Nil because setting the cache when search for contractABI in DB"),
+					[]byte(bytecode.ContractABI),
+					"Nil because setting the cache when search for contractABI in DB",
+				)
 			}
 
 			///////////////////// Write Lock //////////////////////////
 
-			log.Info("Thread ", goid.Get(), ". Found ABI in DB, length:", len(signature.FunctionABI))
-			return []byte(signature.FunctionABI), nil
+			log.Info("Thread ", goid.Get(), ". Found ContractABI in DB, length:", len(bytecode.ContractABI))
+			return []byte(bytecode.ContractABI), nil
 		}
 	}
 
@@ -98,17 +104,16 @@ func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAdd
 	// Create a new record of ContractBytecode
 	bytecode, err := queryRuntimeCode(f.RpcUrl, contractAddress)
 	if string(bytecode) == "" {
-		log.Error("Thread ", goid.Get(), ".The address is an EOA")
+		log.Error("Thread ", goid.Get(), ".The address doesn't contain RuntimeCode")
 		return nil, errors.Wrap(errors.New("Check the address you input"), "Not contract")
 	}
 
 	// If tht contract has not been verified, it will return: Contract source code not verified
-	abi, err = queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
-	if string(abi) == "Contract source code not verified" {
+	abi, err := queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
+	if string(abi) == "Contract source code not verified" { // EOA or the not verified contract
 		log.Error("Thread ", goid.Get(), ".The contract has not been verified")
 		return nil, errors.Wrap(errors.New("Not verify"), "Not verify")
 	}
-
 	// If Etherscan does not have the ABI, return an appropriate error
 	if err != nil {
 		log.Error("Thread ", goid.Get(), ". Fail to fetch ABI by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
@@ -136,35 +141,48 @@ func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAdd
 	defer f.mu.Unlock()
 
 	newContractBytecode := myDB.ContractBytecode{
-		ID:       contractBytecodeID,
-		Bytecode: bytecode,
+		ID:                contractBytecodeID,
+		Bytecode:          bytecode,
+		SourceCode:        "TODO", // TODO
+		CompileTimeParams: "TODO", // TODO
+		ContractABI:       "TODO", // TODO
 	}
 	db.Create(&newContractBytecode)
 
+	// TODO 使用for循环，将所有的函数签名都分别插入到这个表当中
 	// Store the ABI that fetched from Etherscan into the database
 	newSignature := myDB.FunctionSignature{
-		ID:          functionSignatureID,
-		Signature:   nil,         // TODO How to deal with this， what to store: single signature or a array of signatures
-		FunctionABI: string(abi), // We store the whole ABI of the contract
+		ID:                 functionSignatureID,
+		ContractBytecodeID: contractBytecodeID,
+		Signature:          nil,    // TODO How to deal with this， what to store: single signature or a array of signatures
+		FunctionABI:        "TODO", // TODO
 	}
 	db.Create(&newSignature)
 
 	// Create a new record of ContractDeployment
 	newDeployment := myDB.ContractDeployment{
-		ChainID:             chainID,
-		ContractAddress:     addressBytes,
-		ContractBytecodeID:  contractBytecodeID,
-		FunctionSignatureID: functionSignatureID,
+		ChainID:            chainID,
+		ContractAddress:    addressBytes,
+		ContractBytecodeID: contractBytecodeID,
 	}
 	db.Create(&newDeployment)
 
-	abiInSecondCheck, isFound := cache.Get(chainID, contractAddress)
+	// write to cache
+
+	_, contractABI, isFound = cache.Get(chainID, contractAddress, "Search for contractABI")
 	if isFound {
-		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(abiInSecondCheck))
-		return abiInSecondCheck, nil
+		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(contractABI))
+		return contractABI, nil
 	} else {
-		cache.Set(chainID, contractAddress, abi)
+		cache.Set(
+			chainID,
+			contractAddress,
+			[]byte("Nil because setting the cache when search for contractABI in DB"),
+			contractABI,
+			"Nil because setting the cache when search for contractABI in DB",
+		)
 	}
+
 	///////////////////// Write Lock //////////////////////////
 
 	return abi, nil
