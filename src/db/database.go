@@ -20,7 +20,6 @@ type ContractBytecode struct {
 
 // FunctionSignature
 // @dev Table 2
-// ID should be: Keccak256[chainID + contractAddress + sig(4bytes)] ==> Take the highest 8 bytes
 type FunctionSignature struct {
 	ID                 int64     `gorm:"type:bigint;primary_key"` // function signature unique identifier(int, 8 bytes)
 	ContractBytecodeID uuid.UUID `gorm:"type:uuid;index"`         // contract bytecode unique identifier (uuid or int) [foreign key]

@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/google/uuid"
 	"github.com/petermattis/goid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -18,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -49,7 +51,8 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 	// [1. In memory]
 	functionABI, _, isFound := cache.Get(chainID, contractAddress, string(sig[:]))
 	if isFound {
-		log.Info("[Thread ", goid.Get(), "] Found functionABI in cache")
+		log.Info("[Thread ", goid.Get(), "] Found functionABI in cache, data:", functionABI)
+
 		return functionABI, nil
 	}
 
@@ -59,7 +62,7 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 
 	var functionSignature myDB.FunctionSignature
 	if err := db.Where("id = ?", ID).First(&functionSignature).Error; err != nil { // not found ABI in db
-		log.Error("not found")
+		log.Error("not found in db")
 
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -85,20 +88,23 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			}
 			err = db.Create(&newRecord).Error
 			if err != nil {
+				log.Error("Fail to create a searchEtherscan item in db")
 				return nil, errors.Wrap(errors.New("Fail to create an item in db"), "Create fail")
 			}
-		} else { // the record exists
-			if now-int64(searchEtherscan.Time) >= 5*24*60*60 {
+		} else {                                                                // the record exists
+			if now-int64(searchEtherscan.Time) >= 48*time.Hour.Microseconds() { // 2天
 				// pass 5 days, update shouldSearch to true. so the robot will search ABi from Etherscan
 				err = db.Model(&searchEtherscan).Update("should_search", true).Error
 				if err != nil {
+					log.Error("Fail to update the searchEtherscan item in db")
 					return nil, errors.Wrap(errors.New("Fail to update the item in db"), "Update fail")
 				}
 			}
 		}
-
+		log.Warning("Waiting robot to search from Etherscan")
 		return nil, errors.Wrap(errors.New("Waiting robot to search from Etherscan"), "Not Found")
 	} else { // found in db
+		log.Info("Found functionABI in db")
 
 		///////////////////////////// update the cache /////////////////////////////////////////
 		f.mu.Lock()
@@ -121,8 +127,30 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			_ = db.Where("id = ?", resultContractABIID).First(&contractBytecode)
 
 			// unmarshal so that we can return the data
-			_ = json.Unmarshal([]byte(functionSignature.FunctionABI), resultFunctionABI)
-			_ = json.Unmarshal([]byte(contractBytecode.ContractABI), resultContractABI)
+			//err = json.Unmarshal([]byte(jsondata), &resultFunctionABI)
+			err = json.Unmarshal([]byte(strings.ToLower(functionSignature.FunctionABI)), &resultFunctionABI)
+			if err != nil { // TODO 解析失败
+				log.Info("json.Unmarshal fail:", functionSignature.FunctionABI)
+				log.Error("Err 01:", err)
+			} else {
+				log.Info("ddddddata", resultFunctionABI)
+			}
+
+			//aaabi, err := abi.JSON(strings.NewReader(jsondata))
+			aaabi, err := abi.JSON(strings.NewReader("[" + strings.ToLower(functionSignature.FunctionABI) + "]"))
+			if err != nil { // TODO 解析失败
+				log.Info("abi.JSON fail:", "["+strings.ToLower(functionSignature.FunctionABI)+"]")
+				log.Error("Err 02:", err)
+			} else {
+				log.Info("bbbbbbbbbbbbbb", aaabi)
+				//log.Info("ff:", jsondata)
+			}
+
+			err = json.Unmarshal([]byte(contractBytecode.ContractABI), &resultContractABI)
+			if err != nil {
+				log.Info("contractBytecode.ContractABI:", contractBytecode.ContractABI)
+				log.Error("Err 03:", err)
+			}
 
 			cache.Set(
 				chainID,
@@ -131,21 +159,50 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 				resultContractABI,
 				string(functionSignature.Signature),
 			)
-			return resultFunctionABI, nil
+
+			return resultFunctionABI, nil // TODO
 		}
+
 		///////////////////////////// update the cache /////////////////////////////////////////
 	}
 
 }
 
-func searchInEtherscan() error {
+// Set up some threads to run this function as robots
+func searchInEtherscan(apiKey string, rpcUrl string) error {
+
+	// 【检查所有shouldSearch的字段，如果是false，则看看有没有过2天，超过两天，则将其设置为true】
+	var resultsFalse []myDB.SearchEtherscan
+	// query the records: shouldSearch = true
+	err := db.Where("should_search = ?", false).Find(&resultsFalse).Error
+	if err != nil {
+		log.Error("Fail to search item in db")
+		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
+	}
+	for _, item := range resultsFalse {
+		if time.Now().Unix()-int64(item.Time) >= 48*time.Hour.Microseconds() {
+			// 更新shouldSearch为true
+			err = db.Model(&item).Update("should_search", true).Error
+			if err != nil {
+				log.Error("Fail to update the searchEtherscan item in db")
+				return errors.Wrap(errors.New("Fail to update the item in db"), "Update fail")
+			}
+		}
+	}
+
+	// 【检查所有shouldSearch的字段，如果是true，则去Etherscan爬取】
+	f.mu.Lock() // 慢慢的写入
+	defer f.mu.Unlock()
+
 	var results []myDB.SearchEtherscan
 	// query the records: shouldSearch = true
-	err := db.Where("should_search = ?", true).Find(&results).Error
+	err = db.Where("should_search = ?", true).Find(&results).Error
 	if err != nil {
+		log.Error("Fail to search item in db")
 		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
 	}
 
+	// 遍历每个应该search的东西
 	for _, item := range results {
 		addressHex := hex.EncodeToString(item.ContractAddress) // 将地址从字节数组转换为十六进制字符串
 		fmt.Printf("ChainID: %d, ContractAddress: %s, Time: %d\n", item.ChainID, addressHex, item.Time)
@@ -153,18 +210,69 @@ func searchInEtherscan() error {
 		var contractAddress common.Address
 		copy(contractAddress[:], item.ContractAddress[:])
 
-		data, err := queryABIFromEtherscan(f.ApiKey, item.ChainID, contractAddress)
+		data, err := queryABIFromEtherscan(apiKey, item.ChainID, contractAddress)
 		if err != nil {
+			log.Error("Fail to search item in Etherscan")
 			return errors.Wrap(errors.New("Fail to search item in Etherscan"), "Search fail")
 		}
 
-		var resultContractABI *abi.ABI
-		_ = json.Unmarshal(data, resultContractABI) // get the contractABI
-		// TODO
-		// 将contractABI存入db中；解析contractABI，将各个函数选择器分别存入db中；更新cache；
-		// 将bytecode存入db中
+		// 将contractABI存入db中；
+		bytecode, err := queryRuntimeCode(rpcUrl, contractAddress)
+		if err != nil {
+			log.Error("Fail to search bytecode")
+			return errors.Wrap(errors.New("Fail to search bytecode"), "Search fail")
+		}
+		contractbytecodId := uuid.New()
+		contract := myDB.ContractBytecode{
+			ID:                contractbytecodId,
+			Bytecode:          bytecode,
+			SourceCode:        "", // TODO
+			CompileTimeParams: "", // TODO
+			ContractABI:       string(data),
+		}
+		err = db.Create(&contract).Error
+		if err != nil {
+			log.Error("Fail to create an item")
+			return errors.Wrap(errors.New("Fail to create an item"), "Create fail")
+		}
 
+		// 解析contractABI，将各个函数选择器分别存入db中；
+
+		theWholeABI, err := abi.JSON(strings.NewReader(string(data)))
+		if err != nil { // 解析失败
+			log.Error("err:", err)
+		} else { // 解析成功
+			// 获得map的所有键，然后得到所有的Method
+			for key := range theWholeABI.Methods {
+				function := theWholeABI.Methods[key]
+				sig4bytes := myCache.Get4bytesSig(function.Sig)
+				// 遍历解析结果
+				ID := myCache.CacheKey(item.ChainID, contractAddress, string(sig4bytes[:]))
+				functionABI, _ := json.Marshal(function)
+				functionSig := myDB.FunctionSignature{
+					ID:                 ID,
+					ContractBytecodeID: contractbytecodId,
+					Signature:          sig4bytes[:],
+					FunctionABI:        string(functionABI),
+				}
+				err = db.Create(&functionSig).Error
+				if err != nil {
+					log.Error("Fail to create a FunctionSignature item")
+					return errors.Wrap(errors.New("Fail to create a FunctionSignature item"), "Create fail")
+				}
+			}
+			// 将每个应该search的东西设置为false
+			result := db.Model(&myDB.SearchEtherscan{}).
+				Where("chain_id = ? AND contract_address = ?", item.ChainID, item.ContractAddress).
+				Update("should_search", false)
+			if result.Error != nil {
+				log.Error("Fail to create a FunctionSignature item")
+				return errors.Wrap(errors.New("Fail to update the shouldSearch field"), "Update fail")
+			}
+
+		}
 	}
+
 	return nil
 }
 
@@ -426,3 +534,5 @@ func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, er
 	}
 
 }
+
+const jsondata = `[{ "type" : "function", "name" : ""}]`

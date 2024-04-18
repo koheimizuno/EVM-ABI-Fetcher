@@ -1,19 +1,71 @@
 package fetch
 
 import (
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"math/big"
 	"testing"
 )
 
-var contractAddress1 = common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7")
-var signature1 = [4]byte{10, 20, 30, 40}
+var contractAddress1 = common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7") // USDT
+var contractAddress2 = common.HexToAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2") // WETH
+var contractAddress3 = common.HexToAddress("0x6B175474E89094C44Da98b954EedeAC495271d0F") // DAI
+var signature1 = [4]byte{142, 88, 167, 150}
+var signature2 = [4]byte{220, 163, 100, 249}
+var signature3 = [4]byte{193, 190, 199, 214}
+var blockHeight = big.NewInt(10000)
 
 func TestGetABIAtStartOfBlockInOneThread_ContainEOA(t *testing.T) {
+	err := godotenv.Load("../../.env") // Load the `.env` file in the current directory by default
+	assert.NoError(t, err)
 
-	_, err := GetFunctionABIAtBlock(1, contractAddress1, signature1, big.NewInt(10000))
-	assert.Error(t, err)
+	//apiKey := os.Getenv("API_KEY")
+	//rpcURL := os.Getenv("RPC_URL")
+
+	data, err := GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	fmt.Println("data:", data)
+	_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	assert.NoError(t, err)
+	//
+	//// 创建一个ticker，每21秒触发一次
+	//ticker := time.NewTicker(5 * time.Second)
+	//// 创建一个计时器，25秒后触发
+	//stopTimer := time.NewTimer(8 * time.Second)
+	//
+	//for {
+	//	select {
+	//	case <-ticker.C: // 每当ticker发出信号时
+	//		_ = searchInEtherscan(apiKey, rpcURL)
+	//	case <-stopTimer.C: // 当计时器结束时
+	//		ticker.Stop() // 停止ticker
+	//
+	//		/////////////////////////////// Found in db //////////////////////////////////
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	//		/////////////////////////////// Found in db //////////////////////////////////
+	//
+	//		/////////////////////////////// Found in cache //////////////////////////////////
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	//
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	//
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	//		data, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	//		fmt.Println("data", data)
+	//		/////////////////////////////// Found in cache //////////////////////////////////
+	//		fmt.Println("stop")
+	//		return // 退出循环和程序
+	//	}
+	//}
 
 }
 
