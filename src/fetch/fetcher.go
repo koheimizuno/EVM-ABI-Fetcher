@@ -4,7 +4,6 @@ import (
 	myCache "code/src/cache"
 	myDB "code/src/db"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -46,39 +45,36 @@ var f = FetcherCli{ApiKey: os.Getenv("API_KEY"), RpcUrl: os.Getenv("RPC_URL")}
 
 var db = myDB.InitDatabase()
 
+// GetFunctionABIAtBlock
 // @dev try to get the function ABI
 func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]byte, block *big.Int) (*abi.Method, error) {
 	// [1. In memory]
 	functionABI, _, isFound := cache.Get(chainID, contractAddress, string(sig[:]))
 	if isFound {
 		log.Info("[Thread ", goid.Get(), "] Found functionABI in cache, data:", functionABI)
-
 		return functionABI, nil
 	}
 
 	// [2. In DB] Check if the functionABI exists in the database for the given chainID, contract address and sig
-
 	ID := myCache.CacheKey(chainID, contractAddress, string(sig[:]))
-
 	var functionSignature myDB.FunctionSignature
-	if err := db.Where("id = ?", ID).First(&functionSignature).Error; err != nil { // not found ABI in db
-		log.Error("not found in db")
+	if err := db.Where("id = ?", ID).First(&functionSignature).Error; err != nil { // Not found ABI in DB
+		log.Error("Not found the functionABI in DB")
 
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		// logic: not found the ABI in DB => if there is a shouldEtherscan item in DB?
+		// logic: Not found the ABI in DB => if there is a shouldEtherscan item in DB?
 		//           1. no: create a new shouldEtherscan item for the given chainID and contractAddress
-		//           2. yes: check that whether now passes 5 days since the last time or not?
+		//           2. yes: check that whether now passes 2 days since the last time or not?
 		//                1. no: do nothing
-		//                2. yes: set searchEtherscan to true
+		//                2. yes: set searchEtherscan to true, then other thread of searchInEtherscan() will search from Etherscan
 
 		var searchEtherscan myDB.SearchEtherscan
 		now := time.Now().Unix()
 
 		// search in DB
 		result := db.Where("chain_id = ? AND contract_address = ?", chainID, contractAddress).First(&searchEtherscan)
-
-		if result.Error != nil { // not found the searchEtherscan item in db
+		if result.Error != nil { // not found the searchEtherscan item by chainID nad contractAddress in DB
 			// create a new item
 			newRecord := myDB.SearchEtherscan{
 				ChainID:         chainID,
@@ -91,20 +87,20 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 				log.Error("Fail to create a searchEtherscan item in db")
 				return nil, errors.Wrap(errors.New("Fail to create an item in db"), "Create fail")
 			}
-		} else {                                                                // the record exists
-			if now-int64(searchEtherscan.Time) >= 48*time.Hour.Microseconds() { // 2天
-				// pass 5 days, update shouldSearch to true. so the robot will search ABi from Etherscan
+		} else { // the record exists
+			if now-int64(searchEtherscan.Time) >= 48*time.Hour.Microseconds() { // has pass 2 days?
+				// pass 2 days, update shouldSearch to true. so the robot will search ABi from Etherscan by searchInEtherscan()
 				err = db.Model(&searchEtherscan).Update("should_search", true).Error
 				if err != nil {
-					log.Error("Fail to update the searchEtherscan item in db")
+					log.Error("Fail to update the searchEtherscan item to true in db")
 					return nil, errors.Wrap(errors.New("Fail to update the item in db"), "Update fail")
 				}
 			}
 		}
-		log.Warning("Waiting robot to search from Etherscan")
-		return nil, errors.Wrap(errors.New("Waiting robot to search from Etherscan"), "Not Found")
+		log.Warning("Waiting robot to search the functionABI from Etherscan")
+		return nil, errors.Wrap(errors.New("Waiting robot to search the functionABI from Etherscan"), "Not Found")
 	} else { // found in db
-		log.Info("Found functionABI in db")
+		log.Info("Found functionABI in DB")
 
 		///////////////////////////// update the cache /////////////////////////////////////////
 		f.mu.Lock()
@@ -121,37 +117,33 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			return functionABISecondCheck, nil
 		} else { // not found in cache, set the cache
 
-			// define the data to search in db
+			// define the data to search in DB
 			var resultContractABIID = functionSignature.ContractBytecodeID
 			var contractBytecode myDB.ContractBytecode
 			_ = db.Where("id = ?", resultContractABIID).First(&contractBytecode)
 
 			// unmarshal so that we can return the data
-			//err = json.Unmarshal([]byte(jsondata), &resultFunctionABI)
 			err = json.Unmarshal([]byte(strings.ToLower(functionSignature.FunctionABI)), &resultFunctionABI)
-			if err != nil { // TODO 解析失败
+			if err != nil { // TODO fail to unmarshal
+				// There is data in functionSignature.FunctionABI
 				log.Info("json.Unmarshal fail:", functionSignature.FunctionABI)
-				log.Error("Err 01:", err)
-			} else {
-				log.Info("ddddddata", resultFunctionABI)
+				// But we can not unmarshal it: json: cannot unmarshal object into Go struct field ArgumentMarshaling.Type of type string
+				log.Error("Err:", err)
+				// TODO: to debug, we do not use the following command
+				// return nil, errors.Wrap(errors.New("Fail to unmarshal ContractABI"), "Fail unmarshal")
+			} else { // TODO log for debug
+				log.Info("successfully, data:", resultFunctionABI)
 			}
 
-			//aaabi, err := abi.JSON(strings.NewReader(jsondata))
-			aaabi, err := abi.JSON(strings.NewReader("[" + strings.ToLower(functionSignature.FunctionABI) + "]"))
-			if err != nil { // TODO 解析失败
-				log.Info("abi.JSON fail:", "["+strings.ToLower(functionSignature.FunctionABI)+"]")
-				log.Error("Err 02:", err)
-			} else {
-				log.Info("bbbbbbbbbbbbbb", aaabi)
-				//log.Info("ff:", jsondata)
-			}
-
+			// We can unmarshal resultContractABI, but FunctionABI can't
 			err = json.Unmarshal([]byte(contractBytecode.ContractABI), &resultContractABI)
 			if err != nil {
 				log.Info("contractBytecode.ContractABI:", contractBytecode.ContractABI)
-				log.Error("Err 03:", err)
+				log.Error("Fail to unmarshal ContractABI. Err:", err)
+				return nil, errors.Wrap(errors.New("Fail to unmarshal ContractABI"), "Fail unmarshal")
 			}
 
+			// set the data to cache
 			cache.Set(
 				chainID,
 				contractAddress,
@@ -159,29 +151,31 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 				resultContractABI,
 				string(functionSignature.Signature),
 			)
+			// TODO: attention, this command just for debug. We can find that:
+			// TODO: we unmarshal contractABI while functionABI not.
+			log.Info("[Debug], unmarshal contractABI successfully:", resultContractABI)
+			///////////////////////////// update the cache /////////////////////////////////////////
 
-			return resultFunctionABI, nil // TODO
+			return resultFunctionABI, nil // return the functionABI from DB
 		}
 
-		///////////////////////////// update the cache /////////////////////////////////////////
 	}
 
 }
 
-// Set up some threads to run this function as robots
+// @dev Set up some robot threads to run this function, search ABI from Etherscan
 func searchInEtherscan(apiKey string, rpcUrl string) error {
 
-	// 【检查所有shouldSearch的字段，如果是false，则看看有没有过2天，超过两天，则将其设置为true】
 	var resultsFalse []myDB.SearchEtherscan
-	// query the records: shouldSearch = true
+	// If the item pass 2 days, we set the shouldSearch field to true, so that it will try to get the ABi from Etherscan
 	err := db.Where("should_search = ?", false).Find(&resultsFalse).Error
 	if err != nil {
-		log.Error("Fail to search item in db")
-		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
+		log.Error("Fail to search item in DB")
+		return errors.Wrap(errors.New("Fail to search item in DB"), "Search fail")
 	}
 	for _, item := range resultsFalse {
+		// has pass 2 days => update the shouldSearch to true
 		if time.Now().Unix()-int64(item.Time) >= 48*time.Hour.Microseconds() {
-			// 更新shouldSearch为true
 			err = db.Model(&item).Update("should_search", true).Error
 			if err != nil {
 				log.Error("Fail to update the searchEtherscan item in db")
@@ -190,8 +184,8 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 		}
 	}
 
-	// 【检查所有shouldSearch的字段，如果是true，则去Etherscan爬取】
-	f.mu.Lock() // 慢慢的写入
+	// Iterator the DB, if the shouldSearch field is true, than search ABI in Etherscan
+	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	var results []myDB.SearchEtherscan
@@ -202,33 +196,34 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
 	}
 
-	// 遍历每个应该search的东西
+	// The all items whose shouldSearch field are true
 	for _, item := range results {
-		addressHex := hex.EncodeToString(item.ContractAddress) // 将地址从字节数组转换为十六进制字符串
-		fmt.Printf("ChainID: %d, ContractAddress: %s, Time: %d\n", item.ChainID, addressHex, item.Time)
+		log.Info("Begin search ABI from Etherscan. ChinaID:", item.ChainID, ".contractAddress:", item.ContractAddress)
 
 		var contractAddress common.Address
 		copy(contractAddress[:], item.ContractAddress[:])
 
+		// Begin search ABI in Etherscan
 		data, err := queryABIFromEtherscan(apiKey, item.ChainID, contractAddress)
 		if err != nil {
 			log.Error("Fail to search item in Etherscan")
 			return errors.Wrap(errors.New("Fail to search item in Etherscan"), "Search fail")
 		}
 
-		// 将contractABI存入db中；
+		// Begin search Bytecode in blockchain node
 		bytecode, err := queryRuntimeCode(rpcUrl, contractAddress)
 		if err != nil {
 			log.Error("Fail to search bytecode")
 			return errors.Wrap(errors.New("Fail to search bytecode"), "Search fail")
 		}
+		// store the contract's info into DB
 		contractbytecodId := uuid.New()
 		contract := myDB.ContractBytecode{
 			ID:                contractbytecodId,
-			Bytecode:          bytecode,
-			SourceCode:        "", // TODO
-			CompileTimeParams: "", // TODO
-			ContractABI:       string(data),
+			Bytecode:          bytecode,     // the contract's bytecode
+			SourceCode:        "",           // TODO
+			CompileTimeParams: "",           // TODO
+			ContractABI:       string(data), // the contract's ABI
 		}
 		err = db.Create(&contract).Error
 		if err != nil {
@@ -236,19 +231,22 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 			return errors.Wrap(errors.New("Fail to create an item"), "Create fail")
 		}
 
-		// 解析contractABI，将各个函数选择器分别存入db中；
-
+		// parse the contractABI so that we can get functionABI
 		theWholeABI, err := abi.JSON(strings.NewReader(string(data)))
-		if err != nil { // 解析失败
+		if err != nil { // parse fail
 			log.Error("err:", err)
-		} else { // 解析成功
-			// 获得map的所有键，然后得到所有的Method
+		} else { // parse successfully
+			// get the Method's key, then we can use the key to find the functionABI(type: abi.Method)
 			for key := range theWholeABI.Methods {
-				function := theWholeABI.Methods[key]
+				// get the functionABI(type: abi.Method) by key
+				var function abi.Method = theWholeABI.Methods[key] // ensure the variable to be marshaled is abi.Method
+				// functionABI(type: abi.Method) => signature => 4bytes signature
 				sig4bytes := myCache.Get4bytesSig(function.Sig)
-				// 遍历解析结果
+
+				// set the functionABI to DB
 				ID := myCache.CacheKey(item.ChainID, contractAddress, string(sig4bytes[:]))
-				functionABI, _ := json.Marshal(function)
+				// TODO: marshal the functionABI, later it fails to unmarshal
+				functionABI, _ := json.Marshal(function) // functionABI: abi.Method => []byte. Then store into DB
 				functionSig := myDB.FunctionSignature{
 					ID:                 ID,
 					ContractBytecodeID: contractbytecodId,
@@ -261,7 +259,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 					return errors.Wrap(errors.New("Fail to create a FunctionSignature item"), "Create fail")
 				}
 			}
-			// 将每个应该search的东西设置为false
+			// After get the ABI from Etherscan, set the shouldSearch to false
 			result := db.Model(&myDB.SearchEtherscan{}).
 				Where("chain_id = ? AND contract_address = ?", item.ChainID, item.ContractAddress).
 				Update("should_search", false)
@@ -282,7 +280,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 // @param chainID The chain ID
 // @param contractAddress The contract whose ABI you want to get
 // @param block Get the ABI in a certain block height.
-// TODO
+// TODO old version
 /*
 func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
 
@@ -452,7 +450,7 @@ func checkChainIDAndGetReqURL(apiKey string, chainID int, contractAddress common
 	return requestURL, nil
 }
 
-// @dev Query a contract's ABI
+// @dev Query a contract's ABI from Etherscan
 func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Address) ([]byte, error) {
 	requestURL, err := checkChainIDAndGetReqURL(apiKey, chainID, contractAddress)
 	if err != nil {
@@ -513,7 +511,7 @@ func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Ad
 	return []byte(apiResponse.Result), nil
 }
 
-// @dev Query a contract's RuntimeCode
+// @dev Query a contract's RuntimeCode from block node
 func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, error) {
 	client, err := ethclient.Dial(rpcUrl)
 	if err != nil {
@@ -534,5 +532,3 @@ func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, er
 	}
 
 }
-
-const jsondata = `[{ "type" : "function", "name" : ""}]`

@@ -103,11 +103,12 @@ func CacheKey(chainID int, address common.Address, signature string) int64 {
 	return high8Int64
 }
 
-// Get4bytesSig 使用以太坊的Keccak256哈希算法来生成输入字符串的哈希值，并返回最高4字节
+// Get4bytesSig
+// @dev signature => 4 bytes signature
 func Get4bytesSig(signature string) [4]byte {
-	hash := crypto.Keccak256([]byte(signature)) // 使用Keccak256哈希算法
+	hash := crypto.Keccak256([]byte(signature))
 
-	// 取最高的4字节
+	// high 4 bytes
 	var result [4]byte
 	copy(result[:], hash[len(hash)-4:])
 

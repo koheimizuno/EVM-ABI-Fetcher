@@ -1,12 +1,16 @@
 package fetch
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"math/big"
+	"os"
 	"testing"
+	"time"
 )
 
 var contractAddress1 = common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7") // USDT
@@ -17,55 +21,89 @@ var signature2 = [4]byte{220, 163, 100, 249}
 var signature3 = [4]byte{193, 190, 199, 214}
 var blockHeight = big.NewInt(10000)
 
-func TestGetABIAtStartOfBlockInOneThread_ContainEOA(t *testing.T) {
+// test Can unmarshal functionABI or not?
+func TestMarshalAndUnmarshal(t *testing.T) {
+	// We test without Inputs and Outputs, which are Arguments type. Successfully, but no data returns
+	var variableWithNoArgumentFields = abi.Method{
+		Name:            "Hello",
+		RawName:         "name",
+		Type:            3,
+		StateMutability: "view",
+		Payable:         false,
+		Sig:             "name()",
+		ID:              []byte("Bv3eAw=="),
+	}
+	var dataToUnmarshal abi.Method
+	data, err := json.Marshal(variableWithNoArgumentFields)
+	if err != nil {
+		fmt.Println("Marshal fail. err:", err)
+	} else {
+		fmt.Println("Marshal successfully. data:", data)
+	}
+
+	err = json.Unmarshal(data, &dataToUnmarshal)
+	if err != nil {
+		fmt.Println("Unmarshal fail. err:", err)
+	} else {
+		fmt.Println("Unmarshal successfully. data:", dataToUnmarshal) // no data returns, because the Method sturct has rewrite the String()
+	}
+}
+
+// test GetABIAtStartOfBlock()
+// Usage: How to test? init the `.env` file and Sqlite3 environment. Then test.
+// First test: will search from Etherscan. Second search: will search in DB
+func TestGetABIAtStartOfBlock_InOneThread(t *testing.T) {
+
 	err := godotenv.Load("../../.env") // Load the `.env` file in the current directory by default
 	assert.NoError(t, err)
 
-	//apiKey := os.Getenv("API_KEY")
-	//rpcURL := os.Getenv("RPC_URL")
+	apiKey := os.Getenv("API_KEY")
+	rpcURL := os.Getenv("RPC_URL")
 
+	// not found functionABI in cache and DB, then the shouldSearch field will be set to true.
+	// then we can call searchInEtherscan() to search ABI from Etherscan
 	data, err := GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
 	fmt.Println("data:", data)
-	_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
-	_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
-	assert.NoError(t, err)
-	//
-	//// 创建一个ticker，每21秒触发一次
-	//ticker := time.NewTicker(5 * time.Second)
-	//// 创建一个计时器，25秒后触发
-	//stopTimer := time.NewTimer(8 * time.Second)
-	//
-	//for {
-	//	select {
-	//	case <-ticker.C: // 每当ticker发出信号时
-	//		_ = searchInEtherscan(apiKey, rpcURL)
-	//	case <-stopTimer.C: // 当计时器结束时
-	//		ticker.Stop() // 停止ticker
-	//
-	//		/////////////////////////////// Found in db //////////////////////////////////
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
-	//		/////////////////////////////// Found in db //////////////////////////////////
-	//
-	//		/////////////////////////////// Found in cache //////////////////////////////////
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
-	//
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
-	//
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
-	//		_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
-	//		data, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
-	//		fmt.Println("data", data)
-	//		/////////////////////////////// Found in cache //////////////////////////////////
-	//		fmt.Println("stop")
-	//		return // 退出循环和程序
-	//	}
-	//}
+	data, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+	fmt.Println("data:", data)
+	data, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+	fmt.Println("data:", data)
+
+	ticker := time.NewTicker(5 * time.Second)   // 5 seconds later, we will call searchInEtherscan()
+	stopTimer := time.NewTimer(8 * time.Second) // 8 seconds later ,we will try to get the functionABI in cache and DB
+
+	for {
+		select {
+		case <-ticker.C:
+			_ = searchInEtherscan(apiKey, rpcURL) // search ABI from Etherscan
+			fmt.Println()
+		case <-stopTimer.C:
+			ticker.Stop()
+
+			/////////////////////////////// Found in db //////////////////////////////////
+			_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+			/////////////////////////////// Found in db //////////////////////////////////
+
+			/////////////////////////////// Found in cache //////////////////////////////////
+			_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+
+			_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+
+			_, err = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+			_, err = GetFunctionABIAtBlock(1, contractAddress2, signature2, blockHeight)
+			data, err = GetFunctionABIAtBlock(1, contractAddress3, signature3, blockHeight)
+			fmt.Println("data:", data)
+			/////////////////////////////// Found in cache //////////////////////////////////
+			fmt.Println("stop")
+			return
+		}
+	}
 
 }
 
