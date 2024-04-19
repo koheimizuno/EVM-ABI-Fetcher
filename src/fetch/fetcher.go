@@ -106,10 +106,6 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 		f.mu.Lock()
 		defer f.mu.Unlock()
 
-		// define the return data
-		var resultFunctionABI *abi.Method
-		var resultContractABI *abi.ABI
-
 		// Second check
 		functionABISecondCheck, _, isFoundSecondCheck := cache.Get(chainID, contractAddress, string(sig[:]))
 		if isFoundSecondCheck { // If found functionABI in cache
@@ -121,24 +117,25 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			var resultContractABIID = functionSignature.ContractBytecodeID
 			var contractBytecode myDB.ContractBytecode
 			_ = db.Where("id = ?", resultContractABIID).First(&contractBytecode)
-
-			// unmarshal so that we can return the data
-			err = json.Unmarshal([]byte(strings.ToLower(functionSignature.FunctionABI)), &resultFunctionABI)
-			if err != nil { // TODO fail to unmarshal
-				// There is data in functionSignature.FunctionABI
-				log.Info("json.Unmarshal fail:", functionSignature.FunctionABI)
-				// But we can not unmarshal it: json: cannot unmarshal object into Go struct field ArgumentMarshaling.Type of type string
-				log.Error("Err:", err)
-				// TODO: to debug, we do not use the following command
-				// return nil, errors.Wrap(errors.New("Fail to unmarshal ContractABI"), "Fail unmarshal")
-			} else { // TODO log for debug
-				log.Info("successfully, data:", resultFunctionABI)
+			log.Info("hello")
+			// unmarshal the functionABI
+			myABI, err := abi.JSON(strings.NewReader(functionSignature.FunctionABI))
+			if err != nil {
+				log.Info("Fail to unmarshal the ABI")
+				return nil, errors.Wrap(errors.New("Fail to unmarshal the ABI"), "Unmarshal fail")
+			}
+			// get the Method's key, then we can use the key to find the functionABI(type: abi.Method)
+			//////////////////////////////////////////////////////////////////////
+			var resultFunctonABI abi.Method
+			for key := range myABI.Methods {
+				// get the functionABI(type: abi.Method) by key
+				resultFunctonABI = myABI.Methods[key] // ensure the variable to be marshaled is abi.Method
 			}
 
-			// We can unmarshal resultContractABI, but FunctionABI can't
+			var resultContractABI *abi.ABI
+
 			err = json.Unmarshal([]byte(contractBytecode.ContractABI), &resultContractABI)
 			if err != nil {
-				log.Info("contractBytecode.ContractABI:", contractBytecode.ContractABI)
 				log.Error("Fail to unmarshal ContractABI. Err:", err)
 				return nil, errors.Wrap(errors.New("Fail to unmarshal ContractABI"), "Fail unmarshal")
 			}
@@ -147,16 +144,13 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			cache.Set(
 				chainID,
 				contractAddress,
-				resultFunctionABI,
+				&resultFunctonABI,
 				resultContractABI,
 				string(functionSignature.Signature),
 			)
-			// TODO: attention, this command just for debug. We can find that:
-			// TODO: we unmarshal contractABI while functionABI not.
-			log.Info("[Debug], unmarshal contractABI successfully:", resultContractABI)
 			///////////////////////////// update the cache /////////////////////////////////////////
 
-			return resultFunctionABI, nil // return the functionABI from DB
+			return &resultFunctonABI, nil // return the functionABI from DB
 		}
 
 	}
@@ -166,6 +160,7 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 // @dev Set up some robot threads to run this function, search ABI from Etherscan
 func searchInEtherscan(apiKey string, rpcUrl string) error {
 
+	// 1.Update the shouldSearch field
 	var resultsFalse []myDB.SearchEtherscan
 	// If the item pass 2 days, we set the shouldSearch field to true, so that it will try to get the ABi from Etherscan
 	err := db.Where("should_search = ?", false).Find(&resultsFalse).Error
@@ -184,7 +179,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 		}
 	}
 
-	// Iterator the DB, if the shouldSearch field is true, than search ABI in Etherscan
+	// 2.Iterator the DB, if the shouldSearch field is true, than search ABI in Etherscan
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -196,7 +191,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 		return errors.Wrap(errors.New("Fail to search item in db"), "Search fail")
 	}
 
-	// The all items whose shouldSearch field are true
+	// 3.The all items whose shouldSearch field are true
 	for _, item := range results {
 		log.Info("Begin search ABI from Etherscan. ChinaID:", item.ChainID, ".contractAddress:", item.ContractAddress)
 
@@ -216,7 +211,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 			log.Error("Fail to search bytecode")
 			return errors.Wrap(errors.New("Fail to search bytecode"), "Search fail")
 		}
-		// store the contract's info into DB
+		// store the contract's info into DB. [bytecode]
 		contractbytecodId := uuid.New()
 		contract := myDB.ContractBytecode{
 			ID:                contractbytecodId,
@@ -231,43 +226,53 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 			return errors.Wrap(errors.New("Fail to create an item"), "Create fail")
 		}
 
-		// parse the contractABI so that we can get functionABI
-		theWholeABI, err := abi.JSON(strings.NewReader(string(data)))
-		if err != nil { // parse fail
-			log.Error("err:", err)
-		} else { // parse successfully
-			// get the Method's key, then we can use the key to find the functionABI(type: abi.Method)
-			for key := range theWholeABI.Methods {
-				// get the functionABI(type: abi.Method) by key
-				var function abi.Method = theWholeABI.Methods[key] // ensure the variable to be marshaled is abi.Method
-				// functionABI(type: abi.Method) => signature => 4bytes signature
-				sig4bytes := myCache.Get4bytesSig(function.Sig)
+		// Using JSON RawMessage to maintain the original JSON format
+		var rawMessages []json.RawMessage
+		_ = json.Unmarshal(data, &rawMessages)
+		// Create a new string array to store each object
+		var functionStrings []string
+		for _, raw := range rawMessages {
+			functionStrings = append(functionStrings, string(raw))
+		}
 
-				// set the functionABI to DB
-				ID := myCache.CacheKey(item.ChainID, contractAddress, string(sig4bytes[:]))
-				// TODO: marshal the functionABI, later it fails to unmarshal
-				functionABI, _ := json.Marshal(function) // functionABI: abi.Method => []byte. Then store into DB
-				functionSig := myDB.FunctionSignature{
-					ID:                 ID,
-					ContractBytecodeID: contractbytecodId,
-					Signature:          sig4bytes[:],
-					FunctionABI:        string(functionABI),
+		for _, funcStr := range functionStrings {
+			theABI, err := abi.JSON(strings.NewReader("[" + funcStr + "]"))
+			if err != nil {
+				log.Error("Fail to parse the abi")
+				return errors.Wrap(errors.New("Fail to parse the abi"), "Parse fail")
+			} else {
+
+				// get the Method's key, then we can use the key to find the functionABI(type: abi.Method)
+				for key := range theABI.Methods {
+					// get the functionABI(type: abi.Method) by key
+					function := theABI.Methods[key] // ensure the variable to be marshaled is abi.Method
+					// functionABI(type: abi.Method) => signature => 4bytes signature
+					sig4bytes := myCache.Get4bytesSig(function.Sig)
+
+					// set the functionABI to DB
+					ID := myCache.CacheKey(item.ChainID, contractAddress, string(sig4bytes[:]))
+					// TODO: marshal the functionABI, later it fails to unmarshal
+					functionSig := myDB.FunctionSignature{
+						ID:                 ID,
+						ContractBytecodeID: contractbytecodId,
+						Signature:          sig4bytes[:],
+						FunctionABI:        "[" + funcStr + "]",
+					}
+					err = db.Create(&functionSig).Error
+					if err != nil {
+						log.Error("Fail to create a FunctionSignature item")
+						return errors.Wrap(errors.New("Fail to create a FunctionSignature item"), "Create fail")
+					}
 				}
-				err = db.Create(&functionSig).Error
-				if err != nil {
+				// After get the ABI from Etherscan, set the shouldSearch to false
+				result := db.Model(&myDB.SearchEtherscan{}).
+					Where("chain_id = ? AND contract_address = ?", item.ChainID, item.ContractAddress).
+					Update("should_search", false)
+				if result.Error != nil {
 					log.Error("Fail to create a FunctionSignature item")
-					return errors.Wrap(errors.New("Fail to create a FunctionSignature item"), "Create fail")
+					return errors.Wrap(errors.New("Fail to update the shouldSearch field"), "Update fail")
 				}
 			}
-			// After get the ABI from Etherscan, set the shouldSearch to false
-			result := db.Model(&myDB.SearchEtherscan{}).
-				Where("chain_id = ? AND contract_address = ?", item.ChainID, item.ContractAddress).
-				Update("should_search", false)
-			if result.Error != nil {
-				log.Error("Fail to create a FunctionSignature item")
-				return errors.Wrap(errors.New("Fail to update the shouldSearch field"), "Update fail")
-			}
-
 		}
 	}
 

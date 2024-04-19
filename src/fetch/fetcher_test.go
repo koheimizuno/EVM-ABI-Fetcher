@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,32 +22,71 @@ var signature2 = [4]byte{220, 163, 100, 249}
 var signature3 = [4]byte{193, 190, 199, 214}
 var blockHeight = big.NewInt(10000)
 
-// test Can unmarshal functionABI or not?
-func TestMarshalAndUnmarshal(t *testing.T) {
-	// We test without Inputs and Outputs, which are Arguments type. Successfully, but no data returns
-	var variableWithNoArgumentFields = abi.Method{
-		Name:            "Hello",
-		RawName:         "name",
-		Type:            3,
-		StateMutability: "view",
-		Payable:         false,
-		Sig:             "name()",
-		ID:              []byte("Bv3eAw=="),
-	}
-	var dataToUnmarshal abi.Method
-	data, err := json.Marshal(variableWithNoArgumentFields)
+// 定义结构体来匹配JSON中的对象
+type Function struct {
+	Constant        bool     `json:"constant"`
+	Inputs          []Input  `json:"inputs"`
+	Name            string   `json:"name"`
+	Outputs         []Output `json:"outputs"`
+	Payable         bool     `json:"payable"`
+	StateMutability string   `json:"stateMutability"`
+	Type            string   `json:"type"`
+}
+
+// Inputs和Outputs可能需要具体的结构体定义，这里以简单的形式示例
+type Input struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type Output struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func TestUnmarshal(t *testing.T) {
+	jsonData := `
+[
+{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},
+{"constant":false,"inputs":[{"name":"_upgradedAddress","type":"address"}],"name":"deprecate","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},
+{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},
+{"constant":true,"inputs":[],"name":"deprecated","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"}]`
+	// 使用json.RawMessage来保持原始JSON格式
+	var rawMessages []json.RawMessage
+	err := json.Unmarshal([]byte(jsonData), &rawMessages)
 	if err != nil {
-		fmt.Println("Marshal fail. err:", err)
-	} else {
-		fmt.Println("Marshal successfully. data:", data)
+		fmt.Println("Error parsing JSON:", err)
+		return
 	}
 
-	err = json.Unmarshal(data, &dataToUnmarshal)
-	if err != nil {
-		fmt.Println("Unmarshal fail. err:", err)
-	} else {
-		fmt.Println("Unmarshal successfully. data:", dataToUnmarshal) // no data returns, because the Method sturct has rewrite the String()
+	// 创建一个新的字符串数组来存储每个对象
+	var functionStrings []string
+	for _, raw := range rawMessages {
+		functionStrings = append(functionStrings, string(raw))
 	}
+
+	// 打印结果，查看每个字符串
+	for _, funcStr := range functionStrings {
+		//fmt.Printf("Array %d: %s\n", idx+1, funcStr)
+		abi, err := abi.JSON(strings.NewReader("[" + funcStr + "]"))
+		if err != nil {
+			fmt.Println("err:", err)
+		} else {
+			fmt.Println("abi:", abi)
+		}
+	}
+}
+
+func TestFetchFromEtherscan(t *testing.T) {
+	err := godotenv.Load("../../.env") // Load the `.env` file in the current directory by default
+	assert.NoError(t, err)
+
+	apiKey := os.Getenv("API_KEY")
+	rpcURL := os.Getenv("RPC_URL")
+	_, _ = GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	_ = searchInEtherscan(apiKey, rpcURL) // search ABI from Etherscan
+	data, _ := GetFunctionABIAtBlock(1, contractAddress1, signature1, blockHeight)
+	fmt.Println("the data[ name() ]:", data)
 }
 
 // test GetABIAtStartOfBlock()
