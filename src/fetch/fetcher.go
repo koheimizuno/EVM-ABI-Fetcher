@@ -117,7 +117,6 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 			var resultContractABIID = functionSignature.ContractBytecodeID
 			var contractBytecode myDB.ContractBytecode
 			_ = db.Where("id = ?", resultContractABIID).First(&contractBytecode)
-			log.Info("hello")
 			// unmarshal the functionABI
 			myABI, err := abi.JSON(strings.NewReader(functionSignature.FunctionABI))
 			if err != nil {
@@ -157,6 +156,101 @@ func GetFunctionABIAtBlock(chainID int, contractAddress common.Address, sig [4]b
 
 }
 
+// GetContractABIAtBlock
+// @dev try to get the contractABI
+func GetContractABIAtBlock(chainID int, contractAddress common.Address, block *big.Int) (*abi.ABI, error) {
+	// [1. In memory]
+	_, contractABI, isFound := cache.Get(chainID, contractAddress, "")
+	if isFound {
+		log.Info("[Thread ", goid.Get(), "] Found contractABI in cache, data:", contractABI)
+		return contractABI, nil
+	}
+
+	// [2. In DB] Check if the contractABI exists in the database for the given chainID and contract address
+	var contractDeployment myDB.ContractDeployment
+	if err := db.Where("chain_id = ? AND contract_address = ?", chainID, contractAddress).First(&contractDeployment).Error; err != nil { // Not found ABI in DB
+		log.Error("Not found the contractDeploy in DB")
+		//////////////////////////////////////////////////////////////// 加入到shouldSearch计划
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		// logic: Not found the ABI in DB => if there is a shouldEtherscan item in DB?
+		//           1. no: create a new shouldEtherscan item for the given chainID and contractAddress
+		//           2. yes: check that whether now passes 2 days since the last time or not?
+		//                1. no: do nothing
+		//                2. yes: set searchEtherscan to true, then other thread of searchInEtherscan() will search from Etherscan
+
+		var searchEtherscan myDB.SearchEtherscan
+		now := time.Now().Unix()
+
+		// search in DB
+		result := db.Where("chain_id = ? AND contract_address = ?", chainID, contractAddress).First(&searchEtherscan)
+		if result.Error != nil { // not found the searchEtherscan item by chainID nad contractAddress in DB
+			// create a new item
+			newRecord := myDB.SearchEtherscan{
+				ChainID:         chainID,
+				ContractAddress: contractAddress.Bytes(),
+				Time:            int(now),
+				ShouldSearch:    true, // should search in Etherscan
+			}
+			err = db.Create(&newRecord).Error
+			if err != nil {
+				log.Error("Fail to create a searchEtherscan item in db")
+				return nil, errors.Wrap(errors.New("Fail to create an item in db"), "Create fail")
+			}
+		} else { // the record exists
+			if now-int64(searchEtherscan.Time) >= 48*time.Hour.Microseconds() { // has pass 2 days?
+				// pass 2 days, update shouldSearch to true. so the robot will search ABi from Etherscan by searchInEtherscan()
+				err = db.Model(&searchEtherscan).Update("should_search", true).Error
+				if err != nil {
+					log.Error("Fail to update the searchEtherscan item to true in db")
+					return nil, errors.Wrap(errors.New("Fail to update the item in db"), "Update fail")
+				}
+			}
+		}
+		log.Warning("Waiting robot to search the functionABI from Etherscan")
+
+		return nil, errors.Wrap(errors.New("Not found the contractABI in DB"), "Not Found")
+	} else { // found in db
+		log.Info("Found contractABI in DB")
+
+		///////////////////////////// update the cache /////////////////////////////////////////
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		// Second check
+		_, contractABISeccondCheck, isFoundSecondCheck := cache.Get(chainID, contractAddress, "")
+		if isFoundSecondCheck { // If found contractABI in cache
+			log.Info("[Thread ", goid.Get(), "] Second check found contractABI in cache")
+			return contractABISeccondCheck, nil
+		} else { // not found in cache, set the cache
+			var contractBytecode myDB.ContractBytecode
+			if err := db.Where("id = ?", contractDeployment.ContractBytecodeID).First(&contractBytecode).Error; err != nil { // Not found contractABI in DB
+				log.Error("Not found the contractABI in cache")
+				return nil, errors.Wrap(errors.New("Not found the bytecode in DB"), "Not Found")
+			} else {
+				// unmarshal the contractABI
+				myABI, err := abi.JSON(strings.NewReader(contractBytecode.ContractABI))
+				if err != nil {
+					log.Error("Fail to parse the contractABI")
+					return nil, errors.Wrap(errors.New("Fail to parse the contractABI"), "Fail to parse")
+				}
+
+				// set the data to cache
+				cache.Set(
+					chainID,
+					contractAddress,
+					nil,
+					&myABI,
+					"",
+				)
+				///////////////////////////// update the cache /////////////////////////////////////////
+				return &myABI, nil // return the contractABI from DB
+			}
+		}
+
+	}
+}
+
 // @dev Set up some robot threads to run this function, search ABI from Etherscan
 func searchInEtherscan(apiKey string, rpcUrl string) error {
 
@@ -193,7 +287,7 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 
 	// 3.The all items whose shouldSearch field are true
 	for _, item := range results {
-		log.Info("Begin search ABI from Etherscan. ChinaID:", item.ChainID, ".contractAddress:", item.ContractAddress)
+		log.Info("Begin search ABI from Etherscan. ChinaID:", item.ChainID, " contractAddress:", item.ContractAddress)
 
 		var contractAddress common.Address
 		copy(contractAddress[:], item.ContractAddress[:])
@@ -211,16 +305,28 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 			log.Error("Fail to search bytecode")
 			return errors.Wrap(errors.New("Fail to search bytecode"), "Search fail")
 		}
-		// store the contract's info into DB. [bytecode]
+
+		// store the contract's info into DB. [ContractBytecode]
 		contractbytecodId := uuid.New()
-		contract := myDB.ContractBytecode{
+		ContractBytecode := myDB.ContractBytecode{
 			ID:                contractbytecodId,
 			Bytecode:          bytecode,     // the contract's bytecode
 			SourceCode:        "",           // TODO
 			CompileTimeParams: "",           // TODO
 			ContractABI:       string(data), // the contract's ABI
 		}
-		err = db.Create(&contract).Error
+		err = db.Create(&ContractBytecode).Error
+		if err != nil {
+			log.Error("Fail to create an item")
+			return errors.Wrap(errors.New("Fail to create an item"), "Create fail")
+		}
+		// store the contract's info into DB. [ContractDeployment]
+		ContractDeployment := myDB.ContractDeployment{
+			ChainID:            item.ChainID,
+			ContractAddress:    item.ContractAddress,
+			ContractBytecodeID: contractbytecodId,
+		}
+		err = db.Create(&ContractDeployment).Error
 		if err != nil {
 			log.Error("Fail to create an item")
 			return errors.Wrap(errors.New("Fail to create an item"), "Create fail")
@@ -278,156 +384,6 @@ func searchInEtherscan(apiKey string, rpcUrl string) error {
 
 	return nil
 }
-
-// GetABIAtStartOfBlock
-// @notice We do not use the block parameter for now
-// @param db The SQLite3's handle
-// @param chainID The chain ID
-// @param contractAddress The contract whose ABI you want to get
-// @param block Get the ABI in a certain block height.
-// TODO old version
-/*
-func (f *FetcherCli) GetContractABIAtBlock(db *gorm.DB, chainID int, contractAddress common.Address, block *big.Int) ([]byte, error) {
-
-	// [1. In memory]
-	_, contractABI, isFound := cache.Get(chainID, contractAddress, "Search for contractABI")
-	if isFound {
-		log.Info("Thread ", goid.Get(), ". Found contractABI in cache, length:", len(contractABI))
-		return contractABI, nil
-	}
-
-	// [2. In DB] Check if the contractABI exists in the database for the given chainID and contract address
-	//               If found, return the contractABI from the database
-
-	addressBytes := contractAddress.Bytes() // Convert Ethereum addresses to a format that can be queried by the database
-
-	var deployment myDB.ContractDeployment
-	// Query in the database
-	result := db.Where("chain_id = ? AND contract_address = ?", chainID, addressBytes).First(&deployment)
-	if result.Error == nil {
-		// Search for the specific contractABI by ContractDeployment.ContractBytecodeID
-		var bytecode myDB.ContractBytecode
-		result = db.Where("id = ?", deployment.ContractBytecodeID).First(&bytecode)
-		if result.Error == nil { // result.Error is equal to nil means that there is an contractABI in the database
-			///////////////////// Write Lock //////////////////////////
-			f.mu.Lock()
-			defer f.mu.Unlock()
-
-			// Second check to prevent this situation: Multiple threads complete read operations simultaneously and then queue up for write operations,
-			// which can cause duplicate cache writes
-			_, contractABISecondCheck, isFoundSecondCheck := cache.Get(chainID, contractAddress, "Search for contractABI")
-			if isFoundSecondCheck {
-				log.Info("Thread ", goid.Get(), ". Found contractABISecondCheck in cache, length:", len(contractABISecondCheck))
-
-				return contractABISecondCheck, nil
-			} else {
-				// Set to cache: We search for contractABI, so this cache item will not contain functionABI or signature
-				cache.Set(
-					chainID,
-					contractAddress,
-					[]byte("Nil because setting the cache when search for contractABI in DB"),
-					[]byte(bytecode.ContractABI),
-					"Nil because setting the cache when search for contractABI in DB",
-				)
-			}
-
-			///////////////////// Write Lock //////////////////////////
-
-			log.Info("Thread ", goid.Get(), ". Found ContractABI in DB, length:", len(bytecode.ContractABI))
-			return []byte(bytecode.ContractABI), nil
-		}
-	}
-
-	// [3. Etherscan] If the ABi is not found in the database, query Etherscan to retrieve the ABI
-	//              If Etherscan returns the ABI, store it in the database and return it
-
-	// Create a new record of ContractBytecode
-	bytecode, err := queryRuntimeCode(f.RpcUrl, contractAddress)
-	if string(bytecode) == "" {
-		log.Error("Thread ", goid.Get(), ".The address doesn't contain RuntimeCode")
-		return nil, errors.Wrap(errors.New("Check the address you input"), "Not contract")
-	}
-
-	// If tht contract has not been verified, it will return: Contract source code not verified
-	abi, err := queryABIFromEtherscan(f.ApiKey, chainID, contractAddress)
-	if string(abi) == "Contract source code not verified" { // EOA or the not verified contract
-		log.Error("Thread ", goid.Get(), ".The contract has not been verified")
-		return nil, errors.Wrap(errors.New("Not verify"), "Not verify")
-	}
-	// If Etherscan does not have the ABI, return an appropriate error
-	if err != nil {
-		log.Error("Thread ", goid.Get(), ". Fail to fetch ABI by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
-		return nil, errors.Wrap(errors.New("Fail to fetch ABI by Etherscan API"), "Fetch fail")
-	}
-
-	log.Info("Thread ", goid.Get(), ". Fetch ABI in Etherscan, length:", len(abi))
-
-	// Prepare some UUID
-	functionSignatureID := uuid.New()
-	contractBytecodeID := uuid.New()
-
-	if err != nil {
-		log.Error("Thread ", goid.Get(), ". Fail to fetch Bytecode by Etherscan API. ChainID:", chainID, "contractAddress:", contractAddress, "API KEY:", f.ApiKey, "RPC URL:", f.RpcUrl)
-		return nil, errors.Wrap(errors.New("Fail to fetch Bytecode by Etherscan API"), "Fetch fail")
-	}
-
-	///////////////////// Write Lock //////////////////////////
-	// No secondary check( Whether the database contains the data or not) was performed on the database during the write operation,
-	// so there may be multiple identical data entries in the database.
-	// But this has no impact, because when we read the database, we only took one of them.
-	// This situation will not occur multiple times since only has a small probability of occurring when writing to the database for the first time.
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	newContractBytecode := myDB.ContractBytecode{
-		ID:                contractBytecodeID,
-		Bytecode:          bytecode,
-		SourceCode:        "TODO", // TODO
-		CompileTimeParams: "TODO", // TODO
-		ContractABI:       "TODO", // TODO
-	}
-	db.Create(&newContractBytecode)
-
-	// TODO 使用for循环，将所有的函数签名都分别插入到这个表当中
-	// Store the ABI that fetched from Etherscan into the database
-	newSignature := myDB.FunctionSignature{
-		ID:                 functionSignatureID,
-		ContractBytecodeID: contractBytecodeID,
-		Signature:          nil,    // TODO How to deal with this， what to store: single signature or a array of signatures
-		FunctionABI:        "TODO", // TODO
-	}
-	db.Create(&newSignature)
-
-	// Create a new record of ContractDeployment
-	newDeployment := myDB.ContractDeployment{
-		ChainID:            chainID,
-		ContractAddress:    addressBytes,
-		ContractBytecodeID: contractBytecodeID,
-	}
-	db.Create(&newDeployment)
-
-	// write to cache
-
-	_, contractABI, isFound = cache.Get(chainID, contractAddress, "Search for contractABI")
-	if isFound {
-		log.Info("Thread ", goid.Get(), ". Found ABI in cache, length:", len(contractABI))
-		return contractABI, nil
-	} else {
-		cache.Set(
-			chainID,
-			contractAddress,
-			[]byte("Nil because setting the cache when search for contractABI in DB"),
-			contractABI,
-			"Nil because setting the cache when search for contractABI in DB",
-		)
-	}
-
-	///////////////////// Write Lock //////////////////////////
-
-	return abi, nil
-}
-*/
 
 // @dev Check ChainID and get the format the request url
 // @notice Only support Ethereum network now
