@@ -217,6 +217,6 @@ func TestQueryRuntimeCode(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, abi)
 
-	assert.NotNil(t, abi)
+
 
 }
