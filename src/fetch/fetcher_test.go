@@ -216,4 +216,7 @@ func TestQueryRuntimeCode(t *testing.T) {
 	abi, err := queryRuntimeCode(rpcURL, contractAddress1)
 	assert.NoError(t, err)
 	assert.NotNil(t, abi)
+
+
+
 }
