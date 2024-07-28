@@ -486,10 +486,10 @@ func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, er
 		return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
 	}
 
-	if len(bytecode) == 0 {
-		return []byte{}, nil
-	} else {
-		return bytecode, nil
-	}
+	// if len(bytecode) == 0 {
+	// 	return []byte{}, nil
+	// } else {
+	// 	return bytecode, nil
+	// }
 
 }
