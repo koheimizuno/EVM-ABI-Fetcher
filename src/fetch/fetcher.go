@@ -478,11 +478,11 @@ func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, er
 		return nil, errors.Wrap(errors.New("Fail to connect to the node"), "Connect fail")
 	}
 
-	bytecode, err := client.CodeAt(context.Background(), contractAddress, nil) // nil: the newest block
-	if err != nil {
-		log.Error("Fail to get the RuntimeCode. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
-		return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
-	}
+	// bytecode, err := client.CodeAt(context.Background(), contractAddress, nil) // nil: the newest block
+	// if err != nil {
+	// 	log.Error("Fail to get the RuntimeCode. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
+	// 	return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
+	// }
 
 	if len(bytecode) == 0 {
 		return []byte{}, nil
