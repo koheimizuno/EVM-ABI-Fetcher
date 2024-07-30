@@ -471,8 +471,6 @@ func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Ad
 
 	return []byte(apiResponse.Result), nil
 }
-
-// @dev Query a contract's RuntimeCode from block node
 func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, error) {
 	client, err := ethclient.Dial(rpcUrl)
 	if err != nil {
@@ -486,10 +484,10 @@ func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, er
 		return nil, errors.Wrap(errors.New("Fail to get the RuntimeCode"), "Get fail")
 	}
 
-	// if len(bytecode) == 0 {
-	// 	return []byte{}, nil
-	// } else {
-	// 	return bytecode, nil
-	// }
+	if len(bytecode) == 0 {
+		return []byte{}, nil
+	} else {
+		return bytecode, nil
+	}
 
 }
