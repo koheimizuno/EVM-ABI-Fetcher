@@ -471,12 +471,12 @@ func queryABIFromEtherscan(apiKey string, chainID int, contractAddress common.Ad
 
 	return []byte(apiResponse.Result), nil
 }
-// func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, error) {
-// 	client, err := ethclient.Dial(rpcUrl)
-// 	if err != nil {
-// 		log.Error("Fail to connect to the node. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
-// 		return nil, errors.Wrap(errors.New("Fail to connect to the node"), "Connect fail")
-// 	}
+func queryRuntimeCode(rpcUrl string, contractAddress common.Address) ([]byte, error) {
+	client, err := ethclient.Dial(rpcUrl)
+	if err != nil {
+		log.Error("Fail to connect to the node. RPC URL:", rpcUrl, "ContractAddress:", contractAddress)
+		return nil, errors.Wrap(errors.New("Fail to connect to the node"), "Connect fail")
+	}
 
 	bytecode, err := client.CodeAt(context.Background(), contractAddress, nil) // nil: the newest block
 	if err != nil {
